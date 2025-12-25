@@ -2,7 +2,7 @@
 
 As of Nov. 21, our EE Hardhik Pyla has our prototype equipment, which consists of a pressure cooker.
 He has calibrated the pressure sensor. He has a small bug controlling the valve.  
-The thermocouple works.  He is going to develop a simple algorithm for detecting when the sample is dry based on temperature and pressure. (Basically, temperature rises without a pressure rise when the sample is dry.)
+The thermocouple works.  We have developed a simple algorithm for detecting when the sample is dry based on temperature and pressure (see `dryness_monitor.py`). (Basically, temperature rises without a pressure rise when the sample is dry.)
 
 After that we will use a solid-state relay to control a hot plate to turn it off when we we are "dry".
 This will require supervision at first.
