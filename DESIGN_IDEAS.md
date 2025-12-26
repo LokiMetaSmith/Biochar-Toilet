@@ -227,3 +227,74 @@ The hardest part of this design is getting the electricity *into* the pressurize
 * **Do not** drill holes in the side of the oval pot if you can avoid it.
 * **Best Practice:** Route the heavy copper power cables up through the **Lid**. Since the lid is removable, you can have a high-quality, glass-sealed electrical connector on the lid itself.
 * **Alternatively:** If the liner is permanent, route cables through the bottom using a **Spark Plug style pressure feedthrough** (ceramic insulator brazed to a steel nut).
+
+---
+
+## Update: The Smart Lid & Integrated Catalyst
+
+This is an exceptionally strong pivot. By moving the complexity to the **Lid**, you turn the pressure vessel itself into a simple, durable, "dumb" component (the "Indian Pressure Cooker" Oval Pot), while the Lid becomes the "Smart Module."
+
+Here is how we integrate the **Extraction System** and the **Magnetite Catalyst** into this design, keeping it mechanically simple but functionally advanced.
+
+### 1. The Lid-Mounted "Smart Stack"
+
+Instead of drilling holes in your stainless chamber (which creates stress points and eddy current issues), **everything mounts to the Oval Lid.**
+
+* **Vapor Extraction:** A central "chimney" pipe on the lid.
+* **The Valve:** A high-temperature **Steam-Rated Solenoid Valve** (Normally Closed).
+* **The "Cleaning" Mechanism:** You don't need a complex nozzle. You use the physics of **"Steam Flash Scouring."**
+* *How it works:* You keep the valve closed while heating. Pressure builds to ~15-20 PSI. When you trigger the solenoid, the sudden pressure differential creates a supersonic steam jet that blasts the valve seat clean of any bentonite dust or sticky tars.
+
+### 2. The Magnetite Catalyst (CO & NOx Killer)
+
+You are absolutely correct to use Magnetite (). It acts as a dual-function catalyst here:
+
+1. **Oxidation:** Converts Carbon Monoxide () to Carbon Dioxide ().
+2. **De-NOx (SCR):** Your waste contains **Urine** (Ammonia/Urea). In the presence of Magnetite and heat, the Ammonia reacts with Nitrogen Oxides () to form harmless Nitrogen () and Water. This is the exact principle used in diesel trucks (SCR), but you are generating your own "Diesel Exhaust Fluid" (ammonia) from the urine!
+
+**Heating Method:**
+
+* **Do not use a second induction coil.** It adds massive complexity (interference between coils, dual power supplies).
+* **Use a Cartridge Heater.** A simple, robust stainless steel heating rod inserted down the center of your catalyst tube. It is cheap, easy to control (PID), and robust.
+
+### 3. Updated Design: The "All-in-One" Lid Assembly
+
+The OpenSCAD model has been updated to reflect:
+
+* **The Pot:** Remains a simple Oval shell.
+* **The Liner:** Remains the Ceramic/Induction bucket.
+* **The Lid:** Now features a **"Reaction Tower"**.
+* **Bottom:** Steam Valve.
+* **Middle:** Magnetite Catalyst Chamber (heated).
+* **Top:** Clean Exhaust Outlet.
+
+### 4. Technical Explanation of the "Tower"
+
+#### A. The Steam Cleaning Valve (Blue Block)
+
+* **Placement:** Directly above the lid center hole.
+* **Logic:** The valve is the "Gatekeeper."
+* **Phase 1 (Cooking):** Valve Closed. Pressure builds to 15 PSI. Temperature hits 121°C. Sterilization occurs.
+* **Phase 2 (Venting):** Valve Opens. The 15 PSI pressure blasts steam through the valve. This high velocity prevents "gunk" from settling on the seat.
+* **Component:** Use a **PTFE-seated Stainless Steel Solenoid Valve** (rated for >180°C steam).
+
+#### B. The Magnetite Catalyst (Dark Grey Cylinder)
+
+* **Placement:** Immediately *after* the valve.
+* **Why here?** The gas leaving the valve is hot, but maybe not hot enough for catalysis (needs ~300°C+).
+* **The Heater (Gold Rod):** A **Cartridge Heater** runs down the center of the pipe.
+* It heats the Magnetite pellets surrounding it to ~350°C.
+* As the VOCs, CO, and Steam pass through the hot pellets, they are "cracked" and oxidized.
+* **Efficiency:** Because the gas is forced through the hot pellet bed, contact time is high. The "Cartridge Heater in the Center" is the most energy-efficient way to heat a gas stream (heating from the inside out).
+
+#### C. Electrical Feedthrough (Goldenrod)
+
+* Since the coil is inside the pot, we need to get power to it.
+* The Lid has a **High-Amperage Ceramic Feedthrough**.
+* **Connection:** When you lower the lid into the pot, you plug the coil into the bottom of the lid (using a high-temp connector like a ceramic terminal block), then twist and lock the lid.
+
+### 5. Summary of Benefits
+
+1. **Safety:** The dangerous stuff (Catalyst heat, Solenoid, 220V power) is all on the Lid. The Pot is just a bucket. If the pot gets gross, you can hose it out without damaging electronics.
+2. **Chemistry:** You are utilizing the waste's own chemistry (Urine/Ammonia) to clean the exhaust (NOx reduction) in the catalyst.
+3. **Maintenance:** If the catalyst gets fouled, you just unscrew the "Tower" from the lid and replace the pellets. You don't have to scrap the whole machine.

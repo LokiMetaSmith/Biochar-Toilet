@@ -1,16 +1,15 @@
 // --- PARAMETERS ---
 $fn = 100;
 
-// Pot Dimensions (Oval Shape)
-pot_width = 150;    // Minor Axis
-pot_length = 180;   // Major Axis (Oval)
+// Pot Dimensions (Oval)
+pot_width = 150;
+pot_length = 180;
 pot_height = 200;
-wall_thick = 5;
+wall_thick = 4;
 
-// Coil Liner Dimensions
-liner_thick = 15;   // Thick ceramic to protect coils
-coil_turns = 8;
-coil_radius = 4;    // Thickness of the copper wire
+// Catalyst Dimensions
+cat_diam = 60;
+cat_height = 100;
 
 // --- MODULES ---
 
@@ -19,99 +18,114 @@ module oval_shape(w, l) {
 }
 
 module pressure_vessel() {
-    color("Silver", 0.5)
+    color("Silver", 0.6)
     difference() {
-        // Outer Shell
         linear_extrude(pot_height)
             oval_shape(pot_width + wall_thick*2, pot_length + wall_thick*2);
-
-        // Inner Cavity (Hollow)
         translate([0,0, wall_thick])
         linear_extrude(pot_height + 1)
             oval_shape(pot_width, pot_length);
     }
 }
 
-module oval_lid() {
-    // The lid is slightly larger than the opening (to seal from inside)
-    lid_w = pot_width + 10;
-    lid_l = pot_length + 10;
-
-    color("DimGray")
-    translate([0,0, pot_height - 30]) // Positioned "inside" near top
-    union() {
-        // Main Lid Body
-        linear_extrude(10)
-            oval_shape(lid_w, lid_l);
-
-        // The Gasket (Soft Silicone)
-        color("Red")
-        translate([0,0,10])
-        linear_extrude(5)
-            difference() {
-                oval_shape(lid_w, lid_l);
-                oval_shape(lid_w - 20, lid_l - 20);
-            }
-
-        // Handle / Hinge Mount
-        translate([0,0,-15])
-            cylinder(h=15, d=20);
-    }
-}
-
 module internal_coil_liner() {
-    // This represents the Ceramic/Epoxy casting that holds the coils
-    // It sits INSIDE the pressure vessel
+    // The "Bucket" that holds the waste and induction coils
+    // Ceramic material (White)
+    liner_w = pot_width - 5;
+    liner_l = pot_length - 5;
+    liner_h = pot_height - 60;
 
-    liner_w = pot_width - 2; // Clearance fit
-    liner_l = pot_length - 2;
-    liner_h = pot_height - 60; // Leave room for lid
-
-    translate([0,0, wall_thick])
+    translate([0,0, wall_thick + 5])
     union() {
-        // 1. The Ceramic Cup Material (Translucent to see coils)
-        color("White", 0.3)
+        color("White", 0.4)
         difference() {
             linear_extrude(liner_h)
                 oval_shape(liner_w, liner_l);
-
-            translate([0,0, liner_thick])
+            translate([0,0, 10])
             linear_extrude(liner_h)
-                oval_shape(liner_w - liner_thick*2, liner_l - liner_thick*2);
+                oval_shape(liner_w - 20, liner_l - 20);
         }
-
-        // 2. The Induction Coils (Embedded inside the wall)
+        // Copper Coils Embedded in Wall
         color("Orange")
-        translate([0,0, liner_thick])
-        for(i = [0 : coil_turns-1]) {
-            translate([0,0, i * (liner_h/coil_turns) * 0.8])
+        for(i = [0:6]) {
+            translate([0,0, 20 + i*25])
+            linear_extrude(5)
             difference() {
-                // Create a ring
-                linear_extrude(coil_radius*2)
-                    difference() {
-                         oval_shape(liner_w - liner_thick, liner_l - liner_thick);
-                         oval_shape(liner_w - liner_thick - coil_radius*2, liner_l - liner_thick - coil_radius*2);
-                    }
+                oval_shape(liner_w - 5, liner_l - 5);
+                oval_shape(liner_w - 15, liner_l - 15);
             }
         }
     }
 }
 
-// --- RENDER ASSEMBLY ---
+module smart_lid_assembly() {
+    // Positioned at top of pot
+    translate([0,0, pot_height - 10]) {
 
-// 1. The Stainless Steel Pressure Vessel
-pressure_vessel();
+        // 1. The Oval Lid Plate
+        color("DimGray")
+        linear_extrude(8)
+            oval_shape(pot_width + 8, pot_length + 8);
 
-// 2. The Internal "Potted" Coil Assembly
-// (This protects coils from the waste and prevents eddy currents in the pot)
-internal_coil_liner();
+        // 2. The High-Temp Silicone Gasket (Red)
+        color("Red")
+        translate([0,0,8])
+        linear_extrude(4)
+            difference() {
+                oval_shape(pot_width + 8, pot_length + 8);
+                oval_shape(pot_width - 10, pot_length - 10);
+            }
 
-// 3. The Inside-Fitting Oval Lid
-// (Rotated to show how it fits, then pulls up to seal)
-rotate([0,0,0]) oval_lid();
+        // 3. The "Reaction Tower" (Manifold)
+        translate([0,0, 12]) {
 
-// Cutaway Cube (Uncomment to see inside)
-/*
-color("Red", 0.1)
-translate([0,-100,-10]) cube([200,200,300]);
-*/
+            // A. The Steam Pipe (Vertical)
+            color("Silver")
+            cylinder(h=40, d=20);
+
+            // B. The Solenoid Valve Block
+            translate([-15, -15, 40])
+            color("Blue") cube([30,30,30]); // Valve Body
+
+            // C. The Catalyst Chamber (Sitting above valve)
+            translate([0,0,70]) {
+                color("DarkSlateGray")
+                difference() {
+                    cylinder(h=cat_height, d=cat_diam); // Main Housing
+                    translate([0,0,-1]) cylinder(h=cat_height+2, d=cat_diam-10); // Hollow
+                }
+
+                // Catalyst Pellets (Representation)
+                color("Black")
+                translate([0,0,10]) cylinder(h=cat_height-20, d=cat_diam-15);
+
+                // Cartridge Heater (Center Rod)
+                color("Gold")
+                cylinder(h=cat_height + 20, d=8);
+
+                // Text Label
+                color("White")
+                translate([0, -cat_diam/2 - 10, cat_height/2])
+                rotate([90,0,0])
+                text("Magnetite Cat.", size=8, halign="center");
+            }
+
+            // D. Electrical Feedthrough (For Induction Coil Power)
+            translate([40, 0, 0]) {
+                color("Goldenrod") cylinder(h=30, d=15); // Ceramic Feedthrough
+                color("Black") translate([0,0,30]) cylinder(h=20, d=5); // Cable
+            }
+        }
+    }
+}
+
+// --- ASSEMBLY ---
+difference() {
+    union() {
+        pressure_vessel();
+        internal_coil_liner();
+        smart_lid_assembly();
+    }
+    // Cutaway to see inside
+    translate([0, -200, -10]) cube([200, 200, 400]);
+}
