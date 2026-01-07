@@ -22,9 +22,17 @@ module pressure_vessel() {
     difference() {
         linear_extrude(pot_height)
             oval_shape(pot_width + wall_thick*2, pot_length + wall_thick*2);
+
+        // Inner cavity
         translate([0,0, wall_thick])
         linear_extrude(pot_height + 1)
             oval_shape(pot_width, pot_length);
+
+        // Side Steam Port (Hole) on the "Wide Part" (X-axis side)
+        // Positioned near top rim
+        translate([pot_width/2, 0, pot_height - 30])
+        rotate([0, 90, 0])
+        cylinder(h=wall_thick * 3, d=15);
     }
 }
 
@@ -76,44 +84,65 @@ module smart_lid_assembly() {
                 oval_shape(pot_width - 10, pot_length - 10);
             }
 
-        // 3. The "Reaction Tower" (Manifold)
-        translate([0,0, 12]) {
+        // 3. Electrical Feedthrough (For Induction Coil Power)
+        // Kept on lid as it wasn't explicitly moved, but plumbing is cleared.
+        translate([40, 0, 12]) {
+            color("Goldenrod") cylinder(h=30, d=15); // Ceramic Feedthrough
+            color("Black") translate([0,0,30]) cylinder(h=20, d=5); // Cable
+        }
+    }
+}
 
-            // A. The Steam Pipe (Vertical)
-            color("Silver")
-            cylinder(h=40, d=20);
+module side_plumbing_assembly() {
+    // Attached to the side port
+    // Position matches the hole in pressure_vessel
+    port_z = pot_height - 30;
+    port_x = pot_width/2 + wall_thick;
 
-            // B. The Solenoid Valve Block
-            translate([-15, -15, 40])
-            color("Blue") cube([30,30,30]); // Valve Body
+    translate([port_x, 0, port_z]) {
 
-            // C. The Catalyst Chamber (Sitting above valve)
-            translate([0,0,70]) {
-                color("DarkSlateGray")
-                difference() {
-                    cylinder(h=cat_height, d=cat_diam); // Main Housing
-                    translate([0,0,-1]) cylinder(h=cat_height+2, d=cat_diam-10); // Hollow
+        // 1. Gasket & Flange
+        rotate([0, 90, 0]) {
+            color("Red") cylinder(h=2, d=30); // Silicone Gasket
+            translate([0,0,2]) color("Silver") cylinder(h=5, d=40); // Flange Plate
+        }
+
+        // 2. Compression Fitting & Elbow
+        translate([7, 0, 0]) { // 2mm gasket + 5mm flange
+            rotate([0, 90, 0]) color("Silver") cylinder(h=15, d=18); // Fitting
+
+            // 3. Solenoid Valve Block
+            // Mounted at end of fitting
+            translate([15 + 15, 0, 0]) { // Fitting length + half block width
+                color("Blue") cube([30,30,30], center=true);
+
+                // 4. Catalyst Chamber (Hanging Down)
+                // Attached to bottom of valve block
+                translate([0, 0, -15]) { // Bottom of block
+                    rotate([0, 180, 0]) { // Pointing down
+
+                        // Main Housing
+                        color("DarkSlateGray")
+                        difference() {
+                            cylinder(h=cat_height, d=cat_diam);
+                            translate([0,0,-1]) cylinder(h=cat_height+2, d=cat_diam-10);
+                        }
+
+                        // Catalyst Pellets
+                        color("Black")
+                        translate([0,0,10]) cylinder(h=cat_height-20, d=cat_diam-15);
+
+                        // Cartridge Heater
+                        color("Gold")
+                        cylinder(h=cat_height + 20, d=8);
+
+                        // Text Label (Adjusted for rotation)
+                        color("White")
+                        translate([0, -cat_diam/2 - 10, cat_height/2])
+                        rotate([90,0,180]) // Rotated to be readable
+                        text("Magnetite Cat.", size=8, halign="center");
+                    }
                 }
-
-                // Catalyst Pellets (Representation)
-                color("Black")
-                translate([0,0,10]) cylinder(h=cat_height-20, d=cat_diam-15);
-
-                // Cartridge Heater (Center Rod)
-                color("Gold")
-                cylinder(h=cat_height + 20, d=8);
-
-                // Text Label
-                color("White")
-                translate([0, -cat_diam/2 - 10, cat_height/2])
-                rotate([90,0,0])
-                text("Magnetite Cat.", size=8, halign="center");
-            }
-
-            // D. Electrical Feedthrough (For Induction Coil Power)
-            translate([40, 0, 0]) {
-                color("Goldenrod") cylinder(h=30, d=15); // Ceramic Feedthrough
-                color("Black") translate([0,0,30]) cylinder(h=20, d=5); // Cable
             }
         }
     }
@@ -125,6 +154,7 @@ difference() {
         pressure_vessel();
         internal_coil_liner();
         smart_lid_assembly();
+        side_plumbing_assembly();
     }
     // Cutaway to see inside
     translate([0, -200, -10]) cube([200, 200, 400]);
