@@ -33,6 +33,29 @@ module pressure_vessel() {
         translate([pot_width/2, 0, pot_height - 30])
         rotate([0, 90, 0])
         cylinder(h=wall_thick * 3, d=15);
+
+        // NEW: Induction Coil Ports (Y-axis side)
+        // Bottom Port Hole
+        translate([0, pot_length/2, wall_thick + 5 + 20 + 2.5])
+        rotate([-90, 0, 0])
+        cylinder(h=wall_thick * 4, d=10);
+
+        // Top Port Hole
+        translate([0, pot_length/2, wall_thick + 5 + 20 + 6*25 + 2.5])
+        rotate([-90, 0, 0])
+        cylinder(h=wall_thick * 4, d=10);
+
+        // NEW: Thermocouple Port (Opposite X-axis side)
+        translate([-pot_width/2, 0, pot_height - 30])
+        rotate([0, -90, 0])
+        cylinder(h=wall_thick * 3, d=8);
+    }
+
+    // Thermocouple Fitting (Visual)
+    translate([-pot_width/2 - wall_thick, 0, pot_height - 30])
+    rotate([0, -90, 0]) {
+        color("Gold") cylinder(h=10, d=12); // Hex nut
+        color("Silver") cylinder(h=30, d=4); // Probe inside
     }
 }
 
@@ -43,24 +66,74 @@ module internal_coil_liner() {
     liner_l = pot_length - 5;
     liner_h = pot_height - 60;
 
+    // Coil parameters
+    z_start = 20;
+    spacing = 25;
+
+    // Coil exit Y position (Stick out of +Y side)
+    port_y = liner_l/2;
+
     translate([0,0, wall_thick + 5])
     union() {
         color("White", 0.4)
         difference() {
-            linear_extrude(liner_h)
-                oval_shape(liner_w, liner_l);
-            translate([0,0, 10])
-            linear_extrude(liner_h)
-                oval_shape(liner_w - 20, liner_l - 20);
+            // Main Body
+            difference() {
+                linear_extrude(liner_h)
+                    oval_shape(liner_w, liner_l);
+                translate([0,0, 10])
+                linear_extrude(liner_h)
+                    oval_shape(liner_w - 20, liner_l - 20);
+            }
+
+            // NEW: Holes for Coil Ports
+            // Bottom
+            translate([0, port_y, z_start + 2.5])
+            rotate([-90, 0, 0])
+            cylinder(h=20, d=8);
+
+            // Top
+            translate([0, port_y, z_start + 6*spacing + 2.5])
+            rotate([-90, 0, 0])
+            cylinder(h=20, d=8);
         }
+
         // Copper Coils Embedded in Wall
         color("Orange")
-        for(i = [0:6]) {
-            translate([0,0, 20 + i*25])
-            linear_extrude(5)
+        union() {
+            // Stacked Hollow Coils
+            for(i = [0:6]) {
+                translate([0,0, z_start + i*spacing])
+                linear_extrude(5)
+                difference() {
+                    // Outer square
+                    difference() {
+                        oval_shape(liner_w - 5, liner_l - 5);
+                        oval_shape(liner_w - 15, liner_l - 15);
+                    }
+                    // Inner hollow
+                    difference() {
+                        oval_shape(liner_w - 7, liner_l - 7);
+                        oval_shape(liner_w - 13, liner_l - 13);
+                    }
+                }
+            }
+
+            // NEW: Ports (Legs) extending out
+            // Bottom
+            translate([0, port_y - 5, z_start + 2.5])
+            rotate([-90, 0, 0])
             difference() {
-                oval_shape(liner_w - 5, liner_l - 5);
-                oval_shape(liner_w - 15, liner_l - 15);
+                 cylinder(h=40, d=6);
+                 translate([0,0,-1]) cylinder(h=42, d=3);
+            }
+
+            // Top
+            translate([0, port_y - 5, z_start + 6*spacing + 2.5])
+            rotate([-90, 0, 0])
+            difference() {
+                 cylinder(h=40, d=6);
+                 translate([0,0,-1]) cylinder(h=42, d=3);
             }
         }
     }
@@ -84,11 +157,15 @@ module smart_lid_assembly() {
                 oval_shape(pot_width - 10, pot_length - 10);
             }
 
-        // 3. Electrical Feedthrough (For Induction Coil Power)
-        // Kept on lid as it wasn't explicitly moved, but plumbing is cleared.
-        translate([40, 0, 12]) {
-            color("Goldenrod") cylinder(h=30, d=15); // Ceramic Feedthrough
-            color("Black") translate([0,0,30]) cylinder(h=20, d=5); // Cable
+        // 3. Electrical Feedthrough (REMOVED - now on side)
+
+        // 4. NEW: Pressure Relief Valve
+        // Placed near the "back" (Negative Y)
+        translate([0, -pot_length/2 + 30, 8])
+        union() {
+            color("Gold") cylinder(h=10, d=12); // Valve Body
+            color("Red") translate([0,0,10]) cylinder(h=5, d=14); // Cap
+            color("Silver") translate([0,0,15]) cylinder(h=5, d=4); // Stem
         }
     }
 }
