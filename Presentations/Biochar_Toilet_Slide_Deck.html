@@ -141,6 +141,12 @@
         }
         .action-button:hover { background: #fff; color: #1A3D34; }
 
+        /* Accessibility: Focus visible */
+        a:focus-visible, button:focus-visible {
+            outline: 3px solid #B89E6B;
+            outline-offset: 4px;
+        }
+
         /* Chart Styles */
         .chart-container {
             width: 100%; height: 350px; background: #fff; border-radius: 8px;
@@ -981,8 +987,8 @@ def detect_dryness(temp, pressure):
     </div>
 </div>
 
-<button id="present-btn">
-    <i class="fa-solid fa-desktop"></i> Present
+<button id="present-btn" aria-label="Enter presentation mode" title="Enter presentation mode">
+    <i class="fa-solid fa-desktop" aria-hidden="true"></i> Present
 </button>
 
 <script>
@@ -1025,7 +1031,9 @@ def detect_dryness(temp, pressure):
             // Enter presentation mode
             isPresenting = true;
             body.classList.add('presentation-mode');
-            presentBtn.innerHTML = '<i class="fa-solid fa-times"></i> Exit';
+            presentBtn.innerHTML = '<i class="fa-solid fa-times" aria-hidden="true"></i> Exit';
+            presentBtn.setAttribute('aria-label', 'Exit presentation mode (Esc)');
+            presentBtn.setAttribute('title', 'Exit presentation mode (Esc)');
 
             // Mark current slide active
             slides.forEach(s => {
@@ -1047,7 +1055,9 @@ def detect_dryness(temp, pressure):
             // Exit presentation mode
             isPresenting = false;
             body.classList.remove('presentation-mode');
-            presentBtn.innerHTML = '<i class="fa-solid fa-desktop"></i> Present';
+            presentBtn.innerHTML = '<i class="fa-solid fa-desktop" aria-hidden="true"></i> Present';
+            presentBtn.setAttribute('aria-label', 'Enter presentation mode');
+            presentBtn.setAttribute('title', 'Enter presentation mode');
 
             // Reset all slides
             slides.forEach(s => {
