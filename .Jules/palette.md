@@ -4,3 +4,7 @@
 ## 2026-06-16 - Presentation Mode Keyboard UX
 **Learning:** In custom presentation modes triggered by a button click, leaving focus on the button causes spacebar navigation to double-trigger the click event, exiting the mode. Also, default keyboard events (like Space or Arrows) can cause unwanted scrolling if not prevented.
 **Action:** Use `.blur()` on toggle buttons after activation if the mode radically alters the UI, and add `e.preventDefault()` in keyboard navigation listeners for custom UI states.
+
+## 2025-02-12 - Presentation Progress & Keyboard Hints
+**Learning:** For custom presentation decks built in HTML, users often lose track of their progress because default scrollbars are hidden. Adding a fixed visual progress bar with `aria-valuenow` provides essential context. Furthermore, custom UI controls for entering fullscreen presentation modes should always have their `title` and `aria-label` updated to expose keyboard navigation shortcuts (e.g., Arrow Keys) to screen readers and mouse hover, improving discoverability.
+**Action:** When creating custom single-page full-screen experiences, always include a visual progress indicator linked with ARIA progressbar roles, and ensure control tooltips explicitly mention keyboard navigation shortcuts.
