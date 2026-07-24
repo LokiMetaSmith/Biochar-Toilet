@@ -1,3 +1,45 @@
+## **[07/24/2026]**
+
+**Phase 3 Ideation – Physical System Frame Design**
+
+Worked in FreeCAD 1.1 to pull together Hawkins 12L Pressure Pot assembly components and to start initial system frame rigging design using 20mm x 40mm extruded aluminum and compatible hardware. Uploaded current FCStd file status into the Public Invention/Biochar-Toilet/Project Files/CAD Files folder as "Frame for Assembly_v2.FCStd". Once all essential components are uploaded, and component assembly layout has been established, specific joint bracket hardware will be added to a parts list to create a Frame BOM, and custom brackets will be designed and sent to fabrication as-needed, with details uploaded to Frame BOM. 
+
+
+## **[07/03/2026]**
+
+**Phase 3 Ideation – High-Temperature H2S Scrubbing Refinement**
+
+Refined the Phase 3 sulfur mitigation strategy by proposing a high-temperature Silicon Carbide (SiC) and Magnetite cartridge at the bottom of the reaction vessel. This cartridge serves as the final high-temperature "choke point" (800°C+) for downdraft syngas, maximizing H2S removal efficiency before the gas reaches the solenoid valve and external heat recovery hardware. This addition completes the three-tier sulfur defense architecture: in-situ fixation (biochar), peak-temp scrubbing (bottom cartridge), and low-temp polishing (iron sponge). Updates were applied to the [Syngas Processing Memo](Memos/Syngas_Processing_Memo.md) and `DESIGN_IDEAS.md`.
+
+## **[07/01/2026]**
+
+**Phase 3 Ideation – Syngas Processing and Ceramic Liners**
+
+Documented advanced Phase 3 concepts regarding the management of syngas exhaust and modular ceramic liner assemblies. A new engineering memo was created detailing the highly practical lean combustion pathway for oxidizing Syngas into CO₂, and exploring sulfur mitigation strategies directly within the biochar mixture using in-situ fixation and Iron Sponge dry scrubbers. Furthermore, design guidelines for "leaky" modular ceramic assemblies with slip-fit baffles were established to prevent thermal shear failure in the heat exchanger. The complete analysis is recorded in the [Syngas Processing Memo](Memos/Syngas_Processing_Memo.md) and linked in `DESIGN_IDEAS.md`.
+
+
+## **[06/17/2026]**
+
+**Post presentation notes on live demo**
+
+Firmware needed a slight update to assign  
+main.c file: #define PIN_ADC_PRESSURE ADC_CHANNEL_3 // GPIO3, should be  ADC_CHANNEL_2
+
+The DC SSR and battery combo was controlled with a simple momentary switch, which worked well for testing the induction heater. It was found that the coils were shorting out, which created a large spark and irratic performance of the heater. It is assumed that the spark created an inductive spike which may have blown a hole in the capacitors, which may be self healing. Normal operation resumed after some time, however this may be due to other factors. 
+
+The water became steaming hot, and we need to integrate in a radiator into the system. 
+
+High water content fruit, such as raspberries, do not produce much char and additonally do not make as much noxious odors. 
+
+The hot plate bio char pot developed a stuck seal, such that it wouldn't pressurize. It's assumed that the gasket became fouled or not enough moisture is present to engage the pop up locking valve pin. This failue mechanism is not on the oval pot, which uses positive pressure on the entire lid to prevent inadvertant lid removal. 
+
+We were able to biochar or induce pyrolysis with the hot plate version, it took about 2 hours to stop seeing significant steam/smoke/vapor from the leaking seal. 
+
+We demonstrated that magnetic seperation worked with the magnetite mixed sample, using a harddrive magnet and a glass test tube. An electromagnet or a rotating magnet bar would be ideal for this application in the future. 
+
+We should have created a fresh batch of tested mix, our existing mix may not be performing optimally. We also need to run more tests with water and fully drying times.
+
+
 ## **[05/14/2026]**
 
 **PCB Control Board – Trace Rework and Hardware Fixes**
