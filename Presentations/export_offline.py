@@ -15,14 +15,18 @@ OUTPUT_HTML = "Biochar_Toilet_Slide_Deck_Offline.html"
 # network requests and I/O for assets referenced multiple times.
 url_cache = {}
 
+# ⚡ Bolt Optimization: Use a shared Session to reuse TCP connections and TLS
+# negotiations, significantly speeding up the fetching of multiple remote assets.
+http_session = requests.Session()
+http_session.headers.update({
+    'User-Agent': 'BiocharToiletOfflineExporter/1.0 (https://github.com/PubInv/Biochar-Toilet; your@email.com)'
+})
+
 def get_base64_from_url(url):
     if url in url_cache:
         return url_cache[url]
     try:
-        headers = {
-            'User-Agent': 'BiocharToiletOfflineExporter/1.0 (https://github.com/PubInv/Biochar-Toilet; your@email.com)'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
+        response = http_session.get(url, timeout=10)
         response.raise_for_status()
         mime_type = response.headers.get('content-type')
         if not mime_type:
@@ -116,7 +120,7 @@ def main():
         print(f"Processing CSS: {href}")
         if is_url(href):
             try:
-                response = requests.get(href, timeout=10)
+                response = http_session.get(href, timeout=10)
                 response.raise_for_status()
                 css_text = response.text
 
@@ -172,7 +176,7 @@ def main():
         print(f"Processing script: {src}")
         try:
             if is_url(src):
-                response = requests.get(src, timeout=10)
+                response = http_session.get(src, timeout=10)
                 response.raise_for_status()
                 script_text = response.text
             else:

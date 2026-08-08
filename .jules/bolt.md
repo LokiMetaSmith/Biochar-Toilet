@@ -7,3 +7,6 @@
 ## 2025-02-14 - Caching repeated remote asset fetches during export
 **Learning:** The offline export script (`Presentations/export_offline.py`) was repeatedly fetching the same remote CSS and font assets via `requests.get()` because the same URLs were referenced multiple times in the HTML and CSS. This caused the script to be significantly slower and waste network requests.
 **Action:** When writing or optimizing scripts that fetch remote assets or read local files, always introduce a memory cache (e.g., a dictionary) to avoid redundant I/O operations for identical paths/URLs.
+## 2025-02-14 - HTTP Session Reuse for Asset Fetching
+**Learning:** In python scripts that make multiple HTTP requests to the same domain (like `export_offline.py` downloading fonts and external styles), opening a new connection for each request is slow due to TCP handshakes and TLS negotiation.
+**Action:** Use `requests.Session()` instead of multiple individual `requests.get()` calls to enable connection pooling and keep-alive, reducing overhead and improving script performance significantly.
