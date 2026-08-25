@@ -4,7 +4,7 @@ Phase 1 (conductive heating prototype) is complete. All experiment data, firmwar
 
 We're now in Phase 2: induction heating using a magnetite matrix. The shift from resistive heating matters because induction generates heat directly inside the charring cup — no exposed coils corroding in the process environment, and faster energy delivery to the material itself.
 
-Ongoing experiment logs are in the [Progress Reports](https://github.com/PubInv/Biochar-Toilet/blob/main/Project%20Files/Progress%20Reports.md).
+Ongoing experiment logs are in the [Progress Reports](https://github.com/PubInv/Biochar-Toilet/blob/main/Project%20Files/Progress%20Reports.md). Dedicated firmware for the dual-induction prototype is located in [`Project Files/Induction Heating Prototype/Firmware`](https://github.com/PubInv/Biochar-Toilet/tree/main/Project%20Files/Induction%20Heating%20Prototype/Firmware).
 
 <img width="849" height="482" alt="Screenshot 2025-11-21 at 6 10 39 PM" src="https://github.com/user-attachments/assets/6e3a36fb-60a5-46c5-8a6b-8c2908af25fd" />
 
@@ -60,7 +60,7 @@ RF heating, however, has the advantage of heating the sample volumetrically (not
 
 Phase 1 used a pressure cooker as the reaction vessel, a hot plate controlled by an SSR, and an ESP32-based sensing system. The goal was to confirm the core architecture before committing to higher-temperature methods.
 
-It worked. When pressure drops below ~1 PSI while temperature keeps climbing, the system correctly identifies the dry state and cuts heater power automatically. Flash decompression also checked out — opening the solenoid under pressure causes trapped water to flash to steam. A bread charring test (~110°C, 2h40m) produced a visibly charred loaf, though the dryness algorithm didn't trigger since the bread's low moisture content didn't produce a distinct enough pressure signature during drying. Soot accumulation on the lid also flagged particulate management as something to design for in future iterations.
+It worked. When pressure drops below ~1 PSI while temperature keeps climbing, the system correctly identifies the dry state and cuts heater power automatically. Flash decompression also checked out — opening the solenoid under pressure causes trapped water to flash to steam. A bread charring test (~110°C, 2h40m) produced a visibly charred loaf, though the dryness algorithm didn't trigger since the bread's low moisture content didn't produce a distinct enough pressure change during drying. Soot accumulation on the lid also flagged particulate management as something to design for in future iterations.
 
 The hard limit we hit: full charring temperatures aren't safe inside a standard pressure cooker. Lawrence Kincheloe suggested placing an inner cup (heated by a silicon nitride igniter) inside the vessel so the outer shell stays cool — that idea feeds directly into Phase 2.
 
@@ -69,6 +69,8 @@ We also designed a custom control PCB for this phase (ESP32-H2, v0.3.0) with dua
 # Phase 2: Induction System Development (In Progress)
 
 We've switched from resistive heating to pulsed induction using a magnetite matrix. The magnetite sits inside the charring cup and converts the induction field directly into heat — no exposed coils, no conduction losses through the vessel wall.
+
+Dedicated dual-induction firmware and specifications are documented in [`Project Files/Induction Heating Prototype/README.md`](https://github.com/PubInv/Biochar-Toilet/blob/main/Project%20Files/Induction%20Heating%20Prototype/README.md).
 
 Early results from Lawrence Kincheloe and Peter are encouraging. Five grams of magnetite reached 740°F in 60 seconds; the same mass of carbon steel bearings only hit 130°F. Volume-matching the steel to the magnetite closes the gap considerably (~940°F peak), which suggests surface area and density matter more than material choice at this scale. They also charred cheese puffs at 833°F over 16 minutes in open air, with residue on the crucible cap showing evidence of partial pyrolysis.
 
