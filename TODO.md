@@ -3,9 +3,14 @@
 Based on `README.md` and `DESIGN_IDEAS.md`.
 
 - [x] Implement Valve Controller logic (to address the "small bug controlling the valve").
+- [x] Create dedicated ESP32-H2 firmware for Dual Induction Heating Prototype (`Project Files/Induction Heating Prototype/Firmware`).
+- [x] Enhance `dryness_monitor.py` with EMA noise filtering & temperature slope thresholding for low-moisture samples.
 - [ ] Implement Heater Controller (mentioned as a future step).
 - [ ] Design reaction vessel (ongoing).
 - [ ] Implement emergency pop-off valve safety logic.
+
+### Hardware Roadmap
+- [ ] Implement PCB v0.4.0 Revision Plan (Dual MAX31855 SPI thermocouples, high-current pump driver, fluid flow sensor header — see [`PCB_v0.4.0_Induction_Revision_Plan.md`](Project%20Files/PCB%20Design/PCB_v0.4.0_Induction_Revision_Plan.md)).
 
 ### Testing and Benchmarking Improvements
 - [x] Fix lazy test `test_cooling_or_steady_temp` in `test_dryness_monitor.py` which only tests slow temperature rise instead of actual cooling (temperature dropping).
@@ -31,4 +36,3 @@ We should wear PPE, respirator, eye protection, and heat resistant gloves.
   - The heat transfer difficulty discovered during Hardhik's experiment.
   - Lawrence's invention of the induction approach.
   - Progress and difficulties with charring things.
-
