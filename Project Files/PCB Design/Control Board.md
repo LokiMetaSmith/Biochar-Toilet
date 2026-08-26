@@ -11,7 +11,7 @@ The Bio-Char Control Board is an industrial-grade PCB designed to control and mo
 ### Key Features
 - **ESP32-H2 Microcontroller** - WiFi 802.11n + Bluetooth 5.2
 - **Multi-Voltage Power System** - 12V input, regulated 5V and 3.3V rails
-- **High-Power Output Control** - 2× Solenoid valves, 2× SSR outputs
+- **High-Power Output Control** - 2× Solenoid valves / High Current MOSFET outputs, 2× SSR outputs
 - **Sensor Interfaces** - K-type thermocouple, analog pressure sensor
 - **Manual Override** - Physical switches for safety
 - **Professional Design** - 2-layer PCB, through-hole components for easy assembly
@@ -34,7 +34,7 @@ The Bio-Char Control Board is an industrial-grade PCB designed to control and mo
 - **Processor:** RISC-V 96MHz
 
 ### Output Control
-- **Solenoid Valves:** 2× IRLB3813PBF N-channel MOSFETs (30V, 100A, 2.3mΩ)
+- **Solenoid Valves / High Current Outputs:** 2× IRLB3813PBF N-channel MOSFETs (30V, 100A, 2.3mΩ)
 - **SSR Control:** 2× NPN transistor drivers (2N3904)
 - **Protection:** Flyback diodes on all inductive loads
 
@@ -52,17 +52,19 @@ The Bio-Char Control Board is an industrial-grade PCB designed to control and mo
 
 ---
 
-## 📦 Bill of Materials (BOM)
+## 📦 Bill of Materials (BOM) & System Variants
+
+### Control Board PCB Assembly BOM
 
 **Complete BOM available:** [`Bio_Char_BOM_Mouser_FINAL.xlsx`](Bio_Char_BOM_Mouser_FINAL.xlsx)
 
-### BOM Summary
+#### BOM Summary
 - **Total Component Types:** 18
 - **Total Components:** 40 items
 - **Total Cost:** $48.12 (verified Mouser pricing as of March 2026)
 - **Supplier:** Mouser Electronics
 
-### Key Components
+#### Key PCB Components
 
 | Category | Component | Part Number | Qty | Unit Price |
 |----------|-----------|-------------|-----|------------|
@@ -89,6 +91,30 @@ The Bio-Char Control Board is an industrial-grade PCB designed to control and mo
 
 ---
 
+### System Peripheral BOM: Conductive vs. Induction Variants
+
+The control board connects to peripheral hardware specific to each prototype generation:
+
+#### Phase 1: Conductive Heating System Peripherals
+| Subsystem | Component | Specifications | Connection |
+|-----------|-----------|----------------|------------|
+| **Heater** | Single Resistive Hot Plate | 120V / 1000W Joule element | SSR 1 Output (GPIO4) |
+| **Pressure Sensor** | 0–100 PSI Transducer | 0.5–4.5V output | ADC Input (GPIO3) via divider |
+| **Valves** | 1× Solenoid Valve | U.S. Solid 1" SS 12V DC | Solenoid 1 MOSFET (GPIO10) |
+| **Temperature** | K-Type Thermocouple | Single sheath in vessel wall | MAX31855 SPI (GPIO0/1/2) |
+
+#### Phase 2: Dual Induction Heating System Peripherals
+| Subsystem | Component | Specifications | Connection |
+|-----------|-----------|----------------|------------|
+| **Main Heater** | 1800W ZVS Induction Unit | 12V–48V DC, hollow copper vessel coil | SSR 1 Output (GPIO4) |
+| **Catalyst Heater** | ZVS Induction Unit | 12V–48V DC, catalytic converter zone | SSR 2 Output (GPIO5) |
+| **Pressure Sensor** | 0–15 PSI Transducer | 0–5V output (high resolution) | ADC Input (GPIO3) via divider |
+| **Valves** | 1× Solenoid Valve | U.S. Solid 1" SS 12V DC | Solenoid 1 MOSFET (GPIO10) |
+| **Fluid Cooling** | Recirculating Pump | 110V / 12V DC water circulator | Solenoid 2 MOSFET (GPIO11) |
+| **Temperature** | K-Type Thermocouple | Single sheath in vessel side wall | MAX31855 SPI (GPIO0/1/2) |
+
+---
+
 ## 📐 PCB Specifications
 
 ### Physical Dimensions
@@ -110,22 +136,35 @@ All necessary manufacturing files are included in this repository:
 
 ---
 
-## 🔌 Pin Assignments
+## 🔌 Pin Assignments & Firmware Variants
 
-### ESP32-H2 GPIO Mapping
+### 1. Original Conductive Heating Firmware Variant (`Project Files/Conductive Heating Prototype/Firmware`)
 
-| GPIO | Function | Connection | Notes |
-|------|----------|------------|-------|
-| GPIO0 | Solenoid 1 Control | Q2 base (via R1) | Drive Q1 MOSFET |
-| GPIO1 | Solenoid 2 Control | Q5 base (via R7) | Drive Q3 MOSFET |
-| GPIO2 | SSR1 Control | Direct output | Via current limit R3 |
-| GPIO3 | SSR2 Control | Direct output | Via current limit R9 |
-| GPIO4 | ADC Input | Pressure sensor | Via voltage divider R14/R15 |
-| GPIO5 | MAX31855 CS | SPI Chip Select | Thermocouple interface |
-| GPIO6 | MAX31855 CLK | SPI Clock | Thermocouple interface |
-| GPIO7 | MAX31855 DO | SPI Data Out | Thermocouple interface |
-| TBD | Manual Override 1 | Switch SW1 | Optional solenoid 1 |
-| TBD | Manual Override 2 | Switch SW2 | Optional solenoid 2 |
+| GPIO | Function | Hardware Connection | Notes |
+|------|----------|---------------------|-------|
+| GPIO0 | MAX31855 CLK | SPI Clock | Thermocouple SPI |
+| GPIO1 | MAX31855 CS | SPI Chip Select | Thermocouple SPI |
+| GPIO2 | MAX31855 DO | SPI Data Out (MISO) | Thermocouple SPI |
+| GPIO3 | ADC Pressure | ADC1_CH2 Input | 0–100 PSI Sensor via voltage divider |
+| GPIO4 | SSR 1 Control | Q2 base → SSR 1 | Main Resistance Hot Plate |
+| GPIO5 | SSR 2 Control | Q5 base → SSR 2 | Reserved / Secondary |
+| GPIO10 | Solenoid 1 Control | Q1 MOSFET Driver | Main Vent Solenoid Valve 1 |
+| GPIO11 | Solenoid 2 Control | Q3 MOSFET Driver | Reserved / Valve 2 |
+
+### 2. Dual Induction Heating Firmware Variant (`Project Files/Induction Heating Prototype/Firmware`)
+
+| GPIO | Function | Hardware Connection | Notes |
+|------|----------|---------------------|-------|
+| GPIO0 | MAX31855 CLK | SPI Clock | Thermocouple SPI |
+| GPIO1 | MAX31855 CS | SPI Chip Select | Thermocouple SPI |
+| GPIO2 | MAX31855 DO | SPI Data Out (MISO) | Thermocouple SPI |
+| GPIO3 | ADC Pressure | ADC1_CH2 Input | 0–15 PSI (0–5V) Sensor via voltage divider |
+| GPIO4 | Main Coil Heater | Q2 base → SSR 1 | Main Vessel Induction Coil (PWM controlled) |
+| GPIO5 | Catalyst Heater | Q5 base → SSR 2 | Catalytic Converter Induction Heater (Active during cycle) |
+| GPIO10 | Solenoid 1 Control | Q1 MOSFET Driver | Main Vent Solenoid Valve 1 |
+| GPIO11 | Recirculating Pump | Q3 MOSFET Driver | Water/Fluid Recirculating Pump (Feature flagged) |
+
+*Note: GPIO8/9 are internally tied to the ESP32-H2 32 MHz crystal oscillator and cannot be used for general I/O. GPIO14/15 are reserved for the 32 kHz RTC crystal.*
 
 ---
 
@@ -136,17 +175,10 @@ All necessary manufacturing files are included in this repository:
 12V Input (J1)
   │
   ├─[F1: Polyfuse 2A]─┬─[D1: 1N4001RLG]─┬── +12V Rail
-  │                   │                  │   (Solenoids, SSRs)
+  │                   │                  │   (Solenoids, Pumps, SSR drivers)
   │                   │                  │
-  │                   │                  └── [U3: R-78E5.0-1.0 Input]
-  │                   │                         │
-  │                   └─[C6: 47µF 25V]          │
-  │                                             │
-  │                                             ├── 5V Rail
-  │                                             │   ├── ESP32-H2 VCC
-  │                                             │   └── MAX31855 VIN
-  │                                             │
-  │                                             └─[C7: 47µF 16V]
+  │                   │                  └── [U3: R-78E5.0-1.0 Input] ──> 5V Rail
+  │                   └─[C6: 47µF 25V]
   │
   └── ESP32 LDO ───> 3.3V Rail (Internal peripherals)
 ```
@@ -194,17 +226,12 @@ PCB Design/
 ├── Control Board.kicad_pro            # Project File
 ├── Control Board.kicad_prl            # Local Settings
 ├── Control Board.md                   # This file
+├── PCB_v0.4.0_Induction_Revision_Plan.md # Hardware Roadmap for v0.4.0
 ├── Gerber Files/                      # Manufacturing Files
 │   ├── F_Cu.gbr                       # Top Copper
 │   ├── B_Cu.gbr                       # Bottom Copper
-│   ├── F_Mask.gbr                     # Top Soldermask
-│   ├── B_Mask.gbr                     # Bottom Soldermask
-│   ├── F_Silkscreen.gbr               # Top Silkscreen
-│   ├── B_Silkscreen.gbr               # Bottom Silkscreen
-│   ├── Edge_Cuts.gbr                  # Board Outline
 │   └── ...                            # Additional layers
-└── Drill Files/                       # Drill Files
-    └── ...                            # NC drill files
+└── Drill Files/                       # NC Drill Files
 ```
 
 ---
@@ -288,7 +315,7 @@ PCB Design/
 - Verified BOM with Mouser pricing
 - Manufacturing files (Gerbers + Drills) generated
 - MOSFET upgrade to IRLB3813PBF
-- Comprehensive documentation
+- Dual-variant documentation (Conductive vs Induction)
 
 ### v0.2.0
 - Schematic refinement
@@ -297,6 +324,7 @@ PCB Design/
 ### v0.1.0
 - Initial schematic design
 - Basic architecture
+
 ---
 
 ## 👤 Author
@@ -306,6 +334,6 @@ PCB Design/
 
 ---
 
-**Last Updated:** March 18, 2026  
-**KiCad Version:** 9.0.7  
+**Last Updated:** March 18, 2026
+**KiCad Version:** 9.0.7
 **Board Revision:** v0.3.0

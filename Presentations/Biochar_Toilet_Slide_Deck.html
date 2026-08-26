@@ -404,6 +404,61 @@
     </div>
 </div>
 
+<!-- Slide 14.3: Phase 2 Dual Induction Architecture & Firmware -->
+<div class="slide-container">
+    <h2 class="slide-title">Phase 2: Dual Induction Firmware Architecture</h2>
+    <div class="content-area">
+        <p style="margin-bottom: 25px;">The Phase 2 prototype implements a <strong>Dual Induction Zone</strong> architecture managed by dedicated ESP32-H2 firmware (`biochar_induction_firmware`):</p>
+        <div class="tiled-content">
+            <div class="tile">
+                <h3 style="color: #1A3D34; font-size: 20px;"><i aria-hidden="true" class="fa-solid fa-fire-flame-curved" style="margin-right: 10px; color: #B89E6B;"></i>Main Coil Induction (GPIO4 / SSR 1)</h3>
+                <p style="font-size: 16px;">Drives the primary hollow-copper induction loop surrounding the inner charring cup. PWM-regulated against target setpoints (200°C) with active hysteresis control.</p>
+            </div>
+            <div class="tile">
+                <h3 style="color: #1A3D34; font-size: 20px;"><i aria-hidden="true" class="fa-solid fa-smog" style="margin-right: 10px; color: #B89E6B;"></i>Catalyst Induction (GPIO5 / SSR 2)</h3>
+                <p style="font-size: 16px;">Drives a secondary induction heater encasing the catalytic converter zone. Operates continuously during active processing cycles to crack syngas volatile compounds (350°C+).</p>
+            </div>
+            <div class="tile">
+                <h3 style="color: #1A3D34; font-size: 20px;"><i aria-hidden="true" class="fa-solid fa-gauge-high" style="margin-right: 10px; color: #B89E6B;"></i>0–15 PSI Precision Sensing (GPIO3)</h3>
+                <p style="font-size: 16px;">Utilizes a high-resolution 0–15 PSI pressure sensor (0–5V output mapped via voltage divider to ADC1_CH2) for pressure-swing vacuum drying detection.</p>
+            </div>
+            <div class="tile">
+                <h3 style="color: #1A3D34; font-size: 20px;"><i aria-hidden="true" class="fa-solid fa-pump-soap" style="margin-right: 10px; color: #B89E6B;"></i>Fluid Pump Driver (GPIO11)</h3>
+                <p style="font-size: 16px;">Dedicated high-current MOSFET driver channel (Solenoid 2 position) providing active heat-exchanger coolant pump control.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Slide 14.4: Hardware & Software Safety Interlocks -->
+<div class="slide-container">
+    <h2 class="slide-title">Safety Interlocks & Hardware Trip Protection</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div>
+                <h3>Multi-Tier Safety Architecture</h3>
+                <p>Safety is enforced through physical material limits, firmware interlocks, and Python safety controllers:</p>
+                <ul style="margin-top: 15px; font-size: 18px; line-height: 1.6;">
+                    <li><strong>Overpressure Cutoff:</strong> Firmware automatically trips if internal vessel pressure hits 14.0 PSI (93% of full-scale 15 PSI sensor range).</li>
+                    <li><strong>Overtemperature Trip:</strong> Hard thermal limit at 250.0°C instantly disengages both main and catalyst induction heaters.</li>
+                    <li><strong>Fail-Safe Solenoid Latching:</strong> Solenoid Valve 1 latches OPEN under emergency trip to vent pressure.</li>
+                </ul>
+            </div>
+            <div>
+                <div style="background: #1e293b; color: white; padding: 30px; border-radius: 8px; font-family: 'Azeret Mono', monospace; font-size: 15px; line-height: 1.5;">
+                    <div style="color: #B89E6B; font-weight: bold; margin-bottom: 15px;">// Hardware Safety Interlock Logic</div>
+                    if (psi >= MAX_SAFE_PSI || temp >= MAX_SAFE_TEMP_C) {<br>
+                    &nbsp;&nbsp;emergency_tripped = true;<br>
+                    &nbsp;&nbsp;set_main_heater(false);<br>
+                    &nbsp;&nbsp;set_catalyst_heater(false);<br>
+                    &nbsp;&nbsp;gpio_set_level(PIN_VALVE, 1); // Latch OPEN<br>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Slide 5: Why Pyrolysis Over Traditional Sewage? -->
 <div class="slide-container">
     <h2 class="slide-title">Beyond the Flush: Why Not Sewage?</h2>
