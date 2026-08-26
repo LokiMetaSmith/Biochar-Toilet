@@ -16,7 +16,7 @@
  *   GPIO11 → Pump / Valve 2                      (MOSFET-driven, feature flagged)
  *
  * PIN CONFIGURATION NOTES:
- *   GPIO8/9 are internally tied to the ESP32-H2 32 MHz oscillator and unavailable.
+ *   GPIO8/9 are internally tied to the ESP32-H2 32 MHz crystal oscillator and unavailable.
  *   GPIO14/15 are reserved for 32 kHz RTC crystal on some variants.
  *   GPIO3 is shared with MTDI/JTAG.
  *
@@ -26,6 +26,10 @@
  *
  * PRESSURE SENSOR (0–15 PSI, 0–5V output):
  *   Mapped from ADC range (320 to 3008) across 0–15 PSI full scale.
+ *
+ * SAFETY HARDWARE INTERLOCKS:
+ *   - Emergency overpressure limit (14.0 PSI): Instantly kills all heaters and latches solenoid open.
+ *   - Emergency overtemp limit (250.0°C): Instantly kills all heaters and latches solenoid open.
  */
 
 #include <stdio.h>
@@ -70,6 +74,12 @@ static const char *TAG = "biochar_induction";
 #define PRESSURE_MAX  15.0f     // 15 PSI sensor full scale
 
 // ===============================================================
+// --------------------- SAFETY INTERLOCKS -----------------------
+// ===============================================================
+#define MAX_SAFE_PSI       14.0f   // Overpressure limit (kill heaters, latch valve open)
+#define MAX_SAFE_TEMP_C   250.0f   // Overtemp limit (kill heaters, latch valve open)
+
+// ===============================================================
 // --------------------- VALVE HYSTERESIS ------------------------
 // ===============================================================
 // Scaled thresholds for 0-15 PSI full-scale range:
@@ -99,6 +109,7 @@ static bool    valve_on            = false;
 static bool    pump_on             = false;
 static bool    cycle_active        = false;
 static bool    dry_latched         = false;
+static bool    emergency_tripped   = false;
 static int64_t dry_candidate_start = 0;
 static float   temp_ema            = NAN;
 static int64_t window_start        = 0;
@@ -119,12 +130,12 @@ static float adc_to_psi(int adc_raw) {
 
 static void set_main_heater(bool on) {
     // Active HIGH: GPIO4 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
-    gpio_set_level(PIN_HEATER_MAIN, on ? 1 : 0);
+    gpio_set_level(PIN_HEATER_MAIN, (on && !emergency_tripped) ? 1 : 0);
 }
 
 static void set_catalyst_heater(bool on) {
     // Active HIGH: GPIO5 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
-    gpio_set_level(PIN_HEATER_CATALYST, on ? 1 : 0);
+    gpio_set_level(PIN_HEATER_CATALYST, (on && !emergency_tripped) ? 1 : 0);
 }
 
 static void set_pump(bool on) {
@@ -235,7 +246,7 @@ static void control_task(void *arg) {
     ESP_LOGI(TAG, "║ - SSR 1: Main Coil Induction Heater            ║");
     ESP_LOGI(TAG, "║ - SSR 2: Catalyst Induction Heater             ║");
     ESP_LOGI(TAG, "║ - Solenoid Valve 2 / Pump Control              ║");
-    ESP_LOGI(TAG, "║ - Dry Boiler Protection                        ║");
+    ESP_LOGI(TAG, "║ - Safety Interlocks: P > 14PSI / T > 250°C     ║");
     ESP_LOGI(TAG, "╚════════════════════════════════════════════════╝");
     ESP_LOGI(TAG, "Pin map:");
     ESP_LOGI(TAG, "  GPIO0  → MAX31855 CLK");
@@ -268,13 +279,25 @@ static void control_task(void *arg) {
         adc_oneshot_read(adc_handle, PIN_ADC_PRESSURE, &adc_raw);
         float psi = adc_to_psi(adc_raw);
 
+        // ------------------- EMERGENCY TRIP CHECK ----------
+        if (psi >= MAX_SAFE_PSI || (temp_valid && temp_ema >= MAX_SAFE_TEMP_C)) {
+            if (!emergency_tripped) {
+                emergency_tripped = true;
+                ESP_LOGE(TAG, "🚨 EMERGENCY TRIP: Over-limit detected! P=%.2f PSI, T=%.1f°C", psi, temp_ema);
+            }
+        }
+
         // ------------------- VALVE CONTROL -----------------
-        if (!valve_on && psi >= PSI_ON_THRESHOLD)        valve_on = true;
-        else if (valve_on && psi <= PSI_OFF_THRESHOLD)   valve_on = false;
+        if (emergency_tripped) {
+            valve_on = true;  // Latch valve OPEN in emergency trip
+        } else {
+            if (!valve_on && psi >= PSI_ON_THRESHOLD)        valve_on = true;
+            else if (valve_on && psi <= PSI_OFF_THRESHOLD)   valve_on = false;
+        }
         gpio_set_level(PIN_VALVE, valve_on ? 1 : 0);
 
         // ------------------- DRY DETECTION -----------------
-        if (!dry_latched) {
+        if (!dry_latched && !emergency_tripped) {
             if (!cycle_active && psi >= CYCLE_START_PSI)
                 cycle_active = true;
 
@@ -294,7 +317,7 @@ static void control_task(void *arg) {
         bool  main_heater_on = false;
         float duty           = 0.0f;
 
-        if (!dry_latched && temp_valid) {
+        if (!dry_latched && !emergency_tripped && temp_valid) {
             float error = SETPOINT_C - temp_ema;
             duty = (temp_ema >= SETPOINT_C + HYST_C) ? 0.0f : KP * error;
             if (duty < 0.0f) duty = 0.0f;
@@ -311,26 +334,27 @@ static void control_task(void *arg) {
         // ------------------- CATALYST HEATER CONTROL -------
         // Catalytic converter heater runs continuously whenever cycle_active is true
         // and dry state has not latched.
-        bool catalyst_heater_on = cycle_active && !dry_latched;
+        bool catalyst_heater_on = cycle_active && !dry_latched && !emergency_tripped;
         set_catalyst_heater(catalyst_heater_on);
 
         // ------------------- PUMP CONTROL ------------------
 #if FEATURE_PUMP_ENABLED
         // Example logic when enabled: run pump whenever main heater is active
-        set_pump(main_heater_on);
+        set_pump(main_heater_on && !emergency_tripped);
 #else
         set_pump(false);
 #endif
 
         // ------------------- LOG OUTPUT --------------------
         ESP_LOGI(TAG,
-            "P=%.2fpsi | Valve=%s | Pump=%s | MainHeater=%s | CatHeater=%s | DRY=%s | Duty=%.0f%%",
+            "P=%.2fpsi | Valve=%s | Pump=%s | MainHeater=%s | CatHeater=%s | TRIP=%s | DRY=%s | Duty=%.0f%%",
             psi,
-            valve_on           ? "ON"  : "OFF",
-            pump_on            ? "ON"  : "OFF",
-            main_heater_on     ? "ON"  : "OFF",
-            catalyst_heater_on ? "ON"  : "OFF",
-            dry_latched        ? "YES" : "NO",
+            valve_on           ? "OPEN" : "CLOSED",
+            pump_on            ? "ON"   : "OFF",
+            main_heater_on     ? "ON"   : "OFF",
+            catalyst_heater_on ? "ON"   : "OFF",
+            emergency_tripped  ? "YES"  : "NO",
+            dry_latched        ? "YES"  : "NO",
             duty * 100.0f
         );
 
