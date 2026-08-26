@@ -15,9 +15,17 @@
  *   GPIO10 → Solenoid Valve 1                    (MOSFET-driven)
  *   GPIO11 → Pump / Valve 2                      (MOSFET-driven, feature flagged)
  *
+ * PIN CONFIGURATION NOTES:
+ *   GPIO8/9 are internally tied to the ESP32-H2 32 MHz crystal oscillator and unavailable.
+ *   GPIO14/15 are reserved for 32 kHz RTC crystal on some variants.
+ *   GPIO3 is shared with MTDI/JTAG.
+ *
  * DUAL INDUCTION HEATING SYSTEM:
  *   - Main Coil Heater (SSR 1 / GPIO4): Temperature controlled via PWM/PID against SETPOINT_C.
  *   - Catalytic Converter Heater (SSR 2 / GPIO5): Runs continuously whenever cycle_active is true.
+ *
+ * PRESSURE SENSOR (0–15 PSI, 0–5V output):
+ *   Mapped from ADC range (320 to 3008) across 0–15 PSI full scale.
  *
  * SAFETY HARDWARE INTERLOCKS:
  *   - Emergency overpressure limit (14.0 PSI): Instantly kills all heaters and latches solenoid open.
@@ -74,6 +82,7 @@ static const char *TAG = "biochar_induction";
 // ===============================================================
 // --------------------- VALVE HYSTERESIS ------------------------
 // ===============================================================
+// Scaled thresholds for 0-15 PSI full-scale range:
 #define PSI_ON_THRESHOLD   1.20f   // Open valve above this pressure (8% full scale)
 #define PSI_OFF_THRESHOLD  1.05f   // Close valve below this pressure (7% full scale)
 
@@ -120,10 +129,12 @@ static float adc_to_psi(int adc_raw) {
 }
 
 static void set_main_heater(bool on) {
+    // Active HIGH: GPIO4 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
     gpio_set_level(PIN_HEATER_MAIN, (on && !emergency_tripped) ? 1 : 0);
 }
 
 static void set_catalyst_heater(bool on) {
+    // Active HIGH: GPIO5 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
     gpio_set_level(PIN_HEATER_CATALYST, (on && !emergency_tripped) ? 1 : 0);
 }
 
@@ -135,6 +146,15 @@ static void set_pump(bool on) {
 // ===============================================================
 // -------------------- MAX31855 SPI READ ------------------------
 // ===============================================================
+/**
+ * Reads a 32-bit frame from the MAX31855 over SPI.
+ *
+ * Frame layout:
+ *   Bits [31:18] — Thermocouple temp, 14-bit signed, 0.25°C/LSB
+ *   Bit  [16]   — Fault bit (1 = fault present)
+ *   Bits [15:4] — Internal junction temp (not used here)
+ *   Bits [3:0]  — Fault flags (OC, SCG, SCV)
+ */
 static esp_err_t max31855_read(float *temp_c, bool *fault) {
     uint8_t rx_buf[4] = {0};
 
@@ -153,6 +173,7 @@ static esp_err_t max31855_read(float *temp_c, bool *fault) {
 
     *fault = (raw & (1UL << 16)) != 0;
 
+    // Sign-extend the 14-bit thermocouple value
     int16_t tc_raw = (int16_t)((raw >> 18) & 0x3FFF);
     if (tc_raw & 0x2000) tc_raw |= 0xC000;
     *temp_c = tc_raw * 0.25f;
@@ -166,7 +187,7 @@ static esp_err_t max31855_read(float *temp_c, bool *fault) {
 static void init_spi(void) {
     spi_bus_config_t bus_cfg = {
         .miso_io_num   = PIN_MAXDO,
-        .mosi_io_num   = -1,
+        .mosi_io_num   = -1,           // MAX31855 is read-only, no MOSI
         .sclk_io_num   = PIN_MAXCLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
@@ -175,8 +196,8 @@ static void init_spi(void) {
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
 
     spi_device_interface_config_t dev_cfg = {
-        .clock_speed_hz = 1 * 1000 * 1000,
-        .mode           = 0,
+        .clock_speed_hz = 1 * 1000 * 1000,  // 1 MHz (MAX31855 max: 5 MHz)
+        .mode           = 0,                  // CPOL=0, CPHA=0
         .spics_io_num   = PIN_MAXCS,
         .queue_size     = 1,
     };
@@ -191,7 +212,7 @@ static void init_adc(void) {
 
     adc_oneshot_chan_cfg_t chan_cfg = {
         .bitwidth = ADC_BITWIDTH_12,
-        .atten    = ADC_ATTEN_DB_12,
+        .atten    = ADC_ATTEN_DB_12,   // Full 0–3.3 V range
     };
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, PIN_ADC_PRESSURE, &chan_cfg));
 }
@@ -204,15 +225,15 @@ static void init_gpio(void) {
                          (1ULL << PIN_HEATER_CATALYST),
         .mode          = GPIO_MODE_OUTPUT,
         .pull_up_en    = GPIO_PULLUP_DISABLE,
-        .pull_down_en  = GPIO_PULLDOWN_ENABLE,
+        .pull_down_en  = GPIO_PULLDOWN_ENABLE,   // Pull-down keeps drivers off at boot
         .intr_type     = GPIO_INTR_DISABLE,
     };
     ESP_ERROR_CHECK(gpio_config(&io_conf));
 
-    gpio_set_level(PIN_VALVE,           0);
-    gpio_set_level(PIN_PUMP,            0);
-    gpio_set_level(PIN_HEATER_MAIN,     0);
-    gpio_set_level(PIN_HEATER_CATALYST, 0);
+    gpio_set_level(PIN_VALVE,           0);   // Solenoid Valve 1 OFF
+    gpio_set_level(PIN_PUMP,            0);   // Pump / Valve 2 OFF
+    gpio_set_level(PIN_HEATER_MAIN,     0);   // SSR 1 Main Coil OFF
+    gpio_set_level(PIN_HEATER_CATALYST, 0);   // SSR 2 Catalyst Heater OFF
 }
 
 // ===============================================================
@@ -224,8 +245,18 @@ static void control_task(void *arg) {
     ESP_LOGI(TAG, "║ - Pressure Control + Valve 1 (0-15 PSI Sensor) ║");
     ESP_LOGI(TAG, "║ - SSR 1: Main Coil Induction Heater            ║");
     ESP_LOGI(TAG, "║ - SSR 2: Catalyst Induction Heater             ║");
+    ESP_LOGI(TAG, "║ - Solenoid Valve 2 / Pump Control              ║");
     ESP_LOGI(TAG, "║ - Safety Interlocks: P > 14PSI / T > 250°C     ║");
     ESP_LOGI(TAG, "╚════════════════════════════════════════════════╝");
+    ESP_LOGI(TAG, "Pin map:");
+    ESP_LOGI(TAG, "  GPIO0  → MAX31855 CLK");
+    ESP_LOGI(TAG, "  GPIO1  → MAX31855 CS");
+    ESP_LOGI(TAG, "  GPIO2  → MAX31855 DO");
+    ESP_LOGI(TAG, "  GPIO3  → Pressure Sensor ADC (0-15 PSI)");
+    ESP_LOGI(TAG, "  GPIO4  → SSR 1 (Main Induction Coil)");
+    ESP_LOGI(TAG, "  GPIO5  → SSR 2 (Catalyst Induction Heater)");
+    ESP_LOGI(TAG, "  GPIO10 → Solenoid Valve 1");
+    ESP_LOGI(TAG, "  GPIO11 → Solenoid Valve 2 / Pump");
 
     window_start = esp_timer_get_time() / 1000LL;
 
@@ -301,11 +332,14 @@ static void control_task(void *arg) {
         set_main_heater(main_heater_on);
 
         // ------------------- CATALYST HEATER CONTROL -------
+        // Catalytic converter heater runs continuously whenever cycle_active is true
+        // and dry state has not latched.
         bool catalyst_heater_on = cycle_active && !dry_latched && !emergency_tripped;
         set_catalyst_heater(catalyst_heater_on);
 
         // ------------------- PUMP CONTROL ------------------
 #if FEATURE_PUMP_ENABLED
+        // Example logic when enabled: run pump whenever main heater is active
         set_pump(main_heater_on && !emergency_tripped);
 #else
         set_pump(false);
@@ -313,13 +347,15 @@ static void control_task(void *arg) {
 
         // ------------------- LOG OUTPUT --------------------
         ESP_LOGI(TAG,
-            "P=%.2fpsi | Valve=%s | MainHeater=%s | CatHeater=%s | TRIP=%s | DRY=%s",
+            "P=%.2fpsi | Valve=%s | Pump=%s | MainHeater=%s | CatHeater=%s | TRIP=%s | DRY=%s | Duty=%.0f%%",
             psi,
             valve_on           ? "OPEN" : "CLOSED",
+            pump_on            ? "ON"   : "OFF",
             main_heater_on     ? "ON"   : "OFF",
             catalyst_heater_on ? "ON"   : "OFF",
             emergency_tripped  ? "YES"  : "NO",
-            dry_latched        ? "YES"  : "NO"
+            dry_latched        ? "YES"  : "NO",
+            duty * 100.0f
         );
 
         if (temp_valid) {
