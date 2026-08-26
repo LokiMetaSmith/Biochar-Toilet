@@ -322,10 +322,17 @@ static void control_task(void *arg) {
             dry_latched        ? "YES"  : "NO"
         );
 
+        if (temp_valid) {
+            ESP_LOGI(TAG, "  T_ema=%.1f°C", temp_ema);
+        }
+
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 }
 
+// ===============================================================
+// --------------------------- ENTRY POINT -----------------------
+// ===============================================================
 void app_main(void) {
     init_spi();
     init_adc();
