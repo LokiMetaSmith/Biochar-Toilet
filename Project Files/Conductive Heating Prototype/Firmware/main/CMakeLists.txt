@@ -7,7 +7,6 @@ idf_component_register(
         freertos
         log
         spi_flash
-        led_strip
     PRIV_REQUIRES
         driver
 )
