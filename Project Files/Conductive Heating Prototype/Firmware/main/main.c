@@ -54,7 +54,7 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "led_strip.h"
+#include "esp_cpu.h"
 
 static const char *TAG = "biochar";
 
@@ -126,7 +126,6 @@ static int64_t window_start        = 0;
 
 static spi_device_handle_t       max31855_handle;
 static adc_oneshot_unit_handle_t adc_handle;
-static led_strip_handle_t        led_strip = NULL;
 
 // ===============================================================
 // -------------------------- HELPERS ----------------------------
@@ -148,32 +147,38 @@ static void set_heater(bool on) {
 // ===============================================================
 // -------------------- WS2812 RGB LED DRIVER --------------------
 // ===============================================================
-static void init_led_strip(void) {
-    led_strip_config_t strip_config = {
-        .strip_gpio_num   = PIN_LED_WS2812,
-        .max_leds         = 1,
-        .led_pixel_format = LED_PIXEL_FORMAT_GRB,
-        .led_model        = LED_MODEL_WS2812,
-        .flags.invert_out = false,
-    };
-    led_strip_rmt_config_t rmt_config = {
-        .clk_src       = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = 10 * 1000 * 1000, // 10 MHz
-        .flags.with_dma = false,
-    };
-    esp_err_t err = led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
-    if (err == ESP_OK && led_strip) {
-        led_strip_clear(led_strip);
-    } else {
-        ESP_LOGW(TAG, "WS2812 LED strip init returned: %d", err);
-    }
-}
-
 static void set_led_color(uint8_t r, uint8_t g, uint8_t b) {
-    if (led_strip) {
-        led_strip_set_pixel(led_strip, 0, r, g, b);
-        led_strip_refresh(led_strip);
+    uint8_t grb[3] = {g, r, b};
+
+    vTaskSuspendAll();
+    for (int i = 0; i < 3; i++) {
+        uint8_t byte = grb[i];
+        for (int bit = 7; bit >= 0; bit--) {
+            if (byte & (1 << bit)) {
+                // Bit 1: HIGH ~800ns (77 cycles at 96MHz), LOW ~350ns (34 cycles)
+                gpio_set_level(PIN_LED_WS2812, 1);
+                uint32_t start = esp_cpu_get_cycle_count();
+                while ((esp_cpu_get_cycle_count() - start) < 77) { __asm__ __volatile__("nop"); }
+                gpio_set_level(PIN_LED_WS2812, 0);
+                start = esp_cpu_get_cycle_count();
+                while ((esp_cpu_get_cycle_count() - start) < 34) { __asm__ __volatile__("nop"); }
+            } else {
+                // Bit 0: HIGH ~350ns (34 cycles at 96MHz), LOW ~800ns (77 cycles)
+                gpio_set_level(PIN_LED_WS2812, 1);
+                uint32_t start = esp_cpu_get_cycle_count();
+                while ((esp_cpu_get_cycle_count() - start) < 34) { __asm__ __volatile__("nop"); }
+                gpio_set_level(PIN_LED_WS2812, 0);
+                start = esp_cpu_get_cycle_count();
+                while ((esp_cpu_get_cycle_count() - start) < 77) { __asm__ __volatile__("nop"); }
+            }
+        }
     }
+    xTaskResumeAll();
+
+    // WS2812 Reset pulse > 50us (5000 cycles)
+    gpio_set_level(PIN_LED_WS2812, 0);
+    uint32_t start = esp_cpu_get_cycle_count();
+    while ((esp_cpu_get_cycle_count() - start) < 5000) { __asm__ __volatile__("nop"); }
 }
 
 // ===============================================================
@@ -262,8 +267,9 @@ static void init_gpio(void) {
 
     gpio_set_level(PIN_VALVE,      0);   // Valve 1 OFF
     gpio_set_level(PIN_HEATER,     0);   // SSR 1 OFF (BJT base LOW)
+    gpio_set_level(PIN_LED_WS2812, 0);   // WS2812 LED pin LOW
 
-    init_led_strip();
+    set_led_color(0, 0, 0);               // WS2812 reset
 
     // Configure Flush Button input
     gpio_config_t btn_conf = {

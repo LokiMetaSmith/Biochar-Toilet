@@ -55,4 +55,18 @@ Navigate to `Project Files/Induction Heating Prototype/Firmware` and run:
 build_firmware.bat
 ```
 
-The build scripts will clear cached build artifacts, target `esp32h2`, and build the binary via `idf.py build`.
+The build scripts clear cached build artifacts, set the target to `esp32h2`, and build the binary via `idf.py build`.
+
+### Passing Additional Targets (Flash & Monitor)
+
+You can pass extra `idf.py` commands (such as `flash`, `monitor`, or `flash monitor`) directly as arguments to the build script:
+
+**Linux / macOS:**
+```bash
+./build_firmware.sh flash monitor
+```
+
+**Windows:**
+```bat
+build_firmware.bat flash monitor
+```
