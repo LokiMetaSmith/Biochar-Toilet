@@ -18,7 +18,6 @@
  *   GPIO12 → Flush Button                        (Active LOW with internal pull-up)
  *
  * PIN CONFIGURATION NOTES:
- *   GPIO8/9 are internally tied to the ESP32-H2 32 MHz crystal oscillator and unavailable.
  *   GPIO14/15 are reserved for 32 kHz RTC crystal on some variants.
  *   GPIO3 is shared with MTDI/JTAG.
  *
@@ -45,6 +44,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_cpu.h"
+#include "soc/gpio_reg.h"
 
 static const char *TAG = "biochar_induction";
 
@@ -94,7 +94,7 @@ static const char *TAG = "biochar_induction";
 // ===============================================================
 // ------------------- DRY DETECTION (PRESSURE) ------------------
 // ===============================================================
-#define CYCLE_START_PSI   0.30f      // Pressure must exceed this to start a cycle
+#define CYCLE_START_PSI      0.30f      // Pressure must exceed this to start a cycle
 #define DRY_PRESSURE_MAX     0.15f      // PSI below which dry detection is considered
 #define DRY_TIME_MS          15000UL    // Must stay dry for this long to latch
 #define MAX_CYCLE_TIME_MS    (30UL * 60UL * 1000UL) // 30 minutes maximum cycle duration
@@ -160,34 +160,37 @@ static void set_pump(bool on) {
 // ===============================================================
 static void set_led_color(uint8_t r, uint8_t g, uint8_t b) {
     uint8_t grb[3] = {g, r, b};
+    uint32_t mask = (1UL << PIN_LED_WS2812);
 
-    vTaskSuspendAll();
+    portDISABLE_INTERRUPTS();
     for (int i = 0; i < 3; i++) {
         uint8_t byte = grb[i];
         for (int bit = 7; bit >= 0; bit--) {
             if (byte & (1 << bit)) {
                 // Bit 1: HIGH ~800ns (77 cycles at 96MHz), LOW ~350ns (34 cycles)
-                gpio_set_level(PIN_LED_WS2812, 1);
+                REG_WRITE(GPIO_OUT_W1TS_REG, mask);
                 uint32_t start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 77) { __asm__ __volatile__("nop"); }
-                gpio_set_level(PIN_LED_WS2812, 0);
+
+                REG_WRITE(GPIO_OUT_W1TC_REG, mask);
                 start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 34) { __asm__ __volatile__("nop"); }
             } else {
                 // Bit 0: HIGH ~350ns (34 cycles at 96MHz), LOW ~800ns (77 cycles)
-                gpio_set_level(PIN_LED_WS2812, 1);
+                REG_WRITE(GPIO_OUT_W1TS_REG, mask);
                 uint32_t start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 34) { __asm__ __volatile__("nop"); }
-                gpio_set_level(PIN_LED_WS2812, 0);
+
+                REG_WRITE(GPIO_OUT_W1TC_REG, mask);
                 start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 77) { __asm__ __volatile__("nop"); }
             }
         }
     }
-    xTaskResumeAll();
+    portENABLE_INTERRUPTS();
 
     // WS2812 Reset pulse > 50us (5000 cycles)
-    gpio_set_level(PIN_LED_WS2812, 0);
+    REG_WRITE(GPIO_OUT_W1TC_REG, mask);
     uint32_t start = esp_cpu_get_cycle_count();
     while ((esp_cpu_get_cycle_count() - start) < 5000) { __asm__ __volatile__("nop"); }
 }

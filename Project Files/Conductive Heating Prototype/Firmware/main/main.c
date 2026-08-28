@@ -19,11 +19,8 @@
  *   GPIO12 → Flush Button         (Active LOW with internal pull-up)
  *
  * PIN CONFIGURATION NOTES:
- *   The original PCB schematic (v0.3.0) assigned GPIO0–GPIO7 differently based on the
- *   KiCad footprint. After bring-up, GPIO8 and GPIO9 were found to be internally tied
- *   to the ESP32-H2's 32 MHz crystal oscillator and cannot be used as general-purpose I/O.
- *   GPIO14 and GPIO15 are similarly reserved for the 32 kHz RTC crystal on some variants.
- *   The SPI and ADC assignments above reflect the remapped working configuration.
+ *   GPIO14 and GPIO15 are reserved for 32 kHz RTC crystal on some variants.
+ *   GPIO3 is shared with MTDI/JTAG.
  *
  * HEATER/SSR CHANGE vs ARDUINO VERSION:
  *   The Arduino version used active LOW (GPIO4 LOW = SSR ON, sinking to GND).
@@ -55,6 +52,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_cpu.h"
+#include "soc/gpio_reg.h"
 
 static const char *TAG = "biochar";
 
@@ -149,34 +147,37 @@ static void set_heater(bool on) {
 // ===============================================================
 static void set_led_color(uint8_t r, uint8_t g, uint8_t b) {
     uint8_t grb[3] = {g, r, b};
+    uint32_t mask = (1UL << PIN_LED_WS2812);
 
-    vTaskSuspendAll();
+    portDISABLE_INTERRUPTS();
     for (int i = 0; i < 3; i++) {
         uint8_t byte = grb[i];
         for (int bit = 7; bit >= 0; bit--) {
             if (byte & (1 << bit)) {
                 // Bit 1: HIGH ~800ns (77 cycles at 96MHz), LOW ~350ns (34 cycles)
-                gpio_set_level(PIN_LED_WS2812, 1);
+                REG_WRITE(GPIO_OUT_W1TS_REG, mask);
                 uint32_t start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 77) { __asm__ __volatile__("nop"); }
-                gpio_set_level(PIN_LED_WS2812, 0);
+
+                REG_WRITE(GPIO_OUT_W1TC_REG, mask);
                 start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 34) { __asm__ __volatile__("nop"); }
             } else {
                 // Bit 0: HIGH ~350ns (34 cycles at 96MHz), LOW ~800ns (77 cycles)
-                gpio_set_level(PIN_LED_WS2812, 1);
+                REG_WRITE(GPIO_OUT_W1TS_REG, mask);
                 uint32_t start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 34) { __asm__ __volatile__("nop"); }
-                gpio_set_level(PIN_LED_WS2812, 0);
+
+                REG_WRITE(GPIO_OUT_W1TC_REG, mask);
                 start = esp_cpu_get_cycle_count();
                 while ((esp_cpu_get_cycle_count() - start) < 77) { __asm__ __volatile__("nop"); }
             }
         }
     }
-    xTaskResumeAll();
+    portENABLE_INTERRUPTS();
 
     // WS2812 Reset pulse > 50us (5000 cycles)
-    gpio_set_level(PIN_LED_WS2812, 0);
+    REG_WRITE(GPIO_OUT_W1TC_REG, mask);
     uint32_t start = esp_cpu_get_cycle_count();
     while ((esp_cpu_get_cycle_count() - start) < 5000) { __asm__ __volatile__("nop"); }
 }
