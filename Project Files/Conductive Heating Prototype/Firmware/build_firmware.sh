@@ -10,8 +10,14 @@ if [ -z "$IDF_PATH" ]; then
 fi
 
 if [ ! -d "$IDF_PATH" ]; then
-    echo "ESP-IDF not found at $IDF_PATH. Cloning..."
+    echo "ESP-IDF not found at $IDF_PATH. Cloning release/v5.3..."
     git clone -b release/v5.3 --recursive https://github.com/espressif/esp-idf.git "$IDF_PATH"
+elif [ -d "$IDF_PATH/.git" ]; then
+    echo "Updating existing ESP-IDF at $IDF_PATH to release/v5.3..."
+    cd "$IDF_PATH"
+    git fetch origin || true
+    git checkout release/v5.3 || true
+    git pull || true
 fi
 
 echo "Installing ESP-IDF tools..."
