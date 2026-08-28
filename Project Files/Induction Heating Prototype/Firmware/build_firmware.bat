@@ -9,7 +9,7 @@ if "%IDF_PATH%"=="" set "IDF_PATH=%USERPROFILE%\esp-idf"
 
 if not exist "%IDF_PATH%\install.bat" (
     echo ESP-IDF not found at %IDF_PATH%. Cloning...
-    git clone -b v5.2.1 --recursive https://github.com/espressif/esp-idf.git "%IDF_PATH%"
+    git clone -b release/v5.3 --recursive https://github.com/espressif/esp-idf.git "%IDF_PATH%"
 )
 
 echo Installing ESP-IDF tools...

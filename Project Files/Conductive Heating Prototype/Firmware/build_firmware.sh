@@ -11,7 +11,7 @@ fi
 
 if [ ! -d "$IDF_PATH" ]; then
     echo "ESP-IDF not found at $IDF_PATH. Cloning..."
-    git clone -b v5.2.1 --recursive https://github.com/espressif/esp-idf.git "$IDF_PATH"
+    git clone -b release/v5.3 --recursive https://github.com/espressif/esp-idf.git "$IDF_PATH"
 fi
 
 echo "Installing ESP-IDF tools..."
