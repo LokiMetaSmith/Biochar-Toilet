@@ -44,7 +44,7 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_rom_sys.h"
+#include "led_strip.h"
 
 static const char *TAG = "biochar_induction";
 
@@ -116,6 +116,7 @@ static bool    valve_on            = false;
 static bool    pump_on             = false;
 static bool    cycle_active        = false;
 static bool    dry_latched         = false;
+static bool    has_pressurized     = false;
 static bool    emergency_tripped   = false;
 static int64_t dry_candidate_start = 0;
 static int64_t cycle_start_time    = 0;
@@ -127,6 +128,7 @@ static int64_t window_start        = 0;
 
 static spi_device_handle_t       max31855_handle;
 static adc_oneshot_unit_handle_t adc_handle;
+static led_strip_handle_t        led_strip = NULL;
 
 // ===============================================================
 // -------------------------- HELPERS ----------------------------
@@ -157,32 +159,32 @@ static void set_pump(bool on) {
 // ===============================================================
 // -------------------- WS2812 RGB LED DRIVER --------------------
 // ===============================================================
-static void ws2812_send_color(uint8_t r, uint8_t g, uint8_t b) {
-    uint8_t grb[3] = {g, r, b};
-
-    vTaskSuspendAll();
-    for (int i = 0; i < 3; i++) {
-        uint8_t byte = grb[i];
-        for (int bit = 7; bit >= 0; bit--) {
-            if (byte & (1 << bit)) {
-                // Bit 1: HIGH ~0.8us, LOW ~0.4us
-                gpio_set_level(PIN_LED_WS2812, 1);
-                esp_rom_delay_us(1);
-                gpio_set_level(PIN_LED_WS2812, 0);
-                esp_rom_delay_us(1);
-            } else {
-                // Bit 0: HIGH ~0.35us, LOW ~0.8us
-                gpio_set_level(PIN_LED_WS2812, 1);
-                gpio_set_level(PIN_LED_WS2812, 0);
-                esp_rom_delay_us(1);
-            }
-        }
+static void init_led_strip(void) {
+    led_strip_config_t strip_config = {
+        .strip_gpio_num   = PIN_LED_WS2812,
+        .max_leds         = 1,
+        .led_pixel_format = LED_PIXEL_FORMAT_GRB,
+        .led_model        = LED_MODEL_WS2812,
+        .flags.invert_out = false,
+    };
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src       = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, // 10 MHz
+        .flags.with_dma = false,
+    };
+    esp_err_t err = led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
+    if (err == ESP_OK && led_strip) {
+        led_strip_clear(led_strip);
+    } else {
+        ESP_LOGW(TAG, "WS2812 LED strip init returned: %d", err);
     }
-    xTaskResumeAll();
+}
 
-    // WS2812 Reset pulse
-    gpio_set_level(PIN_LED_WS2812, 0);
-    esp_rom_delay_us(60);
+static void set_led_color(uint8_t r, uint8_t g, uint8_t b) {
+    if (led_strip) {
+        led_strip_set_pixel(led_strip, 0, r, g, b);
+        led_strip_refresh(led_strip);
+    }
 }
 
 // ===============================================================
@@ -278,7 +280,8 @@ static void init_gpio(void) {
     gpio_set_level(PIN_PUMP,            0);   // Pump / Valve 2 OFF
     gpio_set_level(PIN_HEATER_MAIN,     0);   // SSR 1 Main Coil OFF
     gpio_set_level(PIN_HEATER_CATALYST, 0);   // SSR 2 Catalyst Heater OFF
-    gpio_set_level(PIN_LED_WS2812,      0);   // WS2812 LED OFF
+
+    init_led_strip();
 
     // Configure Flush Button input
     gpio_config_t btn_conf = {
@@ -369,6 +372,7 @@ static void control_task(void *arg) {
                             emergency_tripped = false;
                             valve_on = false;
                             dry_latched = false;
+                            has_pressurized = false;
                             cycle_active = false;
                             ESP_LOGI(TAG, "✅ EMERGENCY TRIP RESET: Conditions safe. System returned to IDLE!");
                         } else {
@@ -387,6 +391,7 @@ static void control_task(void *arg) {
                         cycle_active = true;
                         cycle_start_time = now;
                         dry_latched = false;
+                        has_pressurized = false;
                         dry_candidate_start = 0;
                         ESP_LOGI(TAG, "🚽 FLUSH BUTTON PRESSED: Biochar cycle initiated manually!");
                     }
@@ -399,6 +404,7 @@ static void control_task(void *arg) {
             cycle_active = true;
             cycle_start_time = now;
             dry_latched = false;
+            has_pressurized = true;
             dry_candidate_start = 0;
             ESP_LOGI(TAG, "🔥 CYCLE STARTED: Pressure exceeded threshold (%.2f PSI)", psi);
         }
@@ -407,21 +413,27 @@ static void control_task(void *arg) {
         if (cycle_active) {
             int64_t cycle_elapsed = now - cycle_start_time;
 
+            if (psi >= CYCLE_START_PSI) {
+                has_pressurized = true;
+            }
+
             // Check 30-minute max cycle timeout
             if (cycle_elapsed >= (int64_t)MAX_CYCLE_TIME_MS) {
                 ESP_LOGI(TAG, "⏰ CYCLE COMPLETE: Reached maximum cycle duration (30 mins). Resetting to IDLE.");
                 cycle_active = false;
                 dry_latched = false;
+                has_pressurized = false;
                 dry_candidate_start = 0;
                 cycle_start_time = 0;
             } else if (!dry_latched && !emergency_tripped) {
-                // Dryness detection
-                if (psi <= DRY_PRESSURE_MAX) {
+                // Dryness detection: only triggers AFTER system has pressurized
+                if (has_pressurized && psi <= DRY_PRESSURE_MAX) {
                     if (dry_candidate_start == 0)
                         dry_candidate_start = now;
                     if ((now - dry_candidate_start) >= (int64_t)DRY_TIME_MS) {
                         dry_latched = true;
                         cycle_active = false;
+                        has_pressurized = false;
                         cycle_start_time = 0;
                         ESP_LOGI(TAG, "🌱 DRY LATCHED: Moisture evaporated. Biochar drying stage complete!");
                     }
@@ -473,17 +485,17 @@ static void control_task(void *arg) {
 
         if (emergency_tripped) {
             // RED Flashing
-            if (flash_state) ws2812_send_color(255, 0, 0);
-            else             ws2812_send_color(0, 0, 0);
+            if (flash_state) set_led_color(255, 0, 0);
+            else             set_led_color(0, 0, 0);
         } else if (cycle_active) {
             // ORANGE/YELLOW
-            ws2812_send_color(255, 120, 0);
+            set_led_color(255, 120, 0);
         } else if (dry_latched) {
             // BLUE
-            ws2812_send_color(0, 0, 255);
+            set_led_color(0, 0, 255);
         } else {
             // GREEN (IDLE / Ready)
-            ws2812_send_color(0, 255, 0);
+            set_led_color(0, 255, 0);
         }
 
         // ------------------- LOG OUTPUT --------------------

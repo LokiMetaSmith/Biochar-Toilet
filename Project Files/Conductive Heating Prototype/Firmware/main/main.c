@@ -13,8 +13,10 @@
  *   GPIO3  → Pressure Sensor ADC  (ADC1_CH2, 0–100 PSI via voltage divider)
  *   GPIO4  → SSR 1 / Heater       (active HIGH — drives BJT base to complete SSR circuit)
  *   GPIO5  → SSR 2                (reserved, not currently active — see commented code)
+ *   GPIO8  → WS2812 RGB LED       (Status Indicator)
  *   GPIO10 → Solenoid Valve 1     (MOSFET-driven)
  *   GPIO11 → Solenoid Valve 2     (reserved, not currently active — see commented code)
+ *   GPIO12 → Flush Button         (Active LOW with internal pull-up)
  *
  * PIN CONFIGURATION NOTES:
  *   The original PCB schematic (v0.3.0) assigned GPIO0–GPIO7 differently based on the
@@ -52,6 +54,7 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "led_strip.h"
 
 static const char *TAG = "biochar";
 
@@ -68,6 +71,8 @@ static const char *TAG = "biochar";
 #define PIN_ADC_PRESSURE  ADC_CHANNEL_2   // GPIO3 — Pressure sensor (ADC1_CH2)
 #define PIN_VALVE         GPIO_NUM_10     // GPIO10 — Solenoid Valve 1 (MOSFET)
 #define PIN_HEATER        GPIO_NUM_4      // GPIO4 — SSR 1 (active HIGH → BJT → SSR)
+#define PIN_LED_WS2812    GPIO_NUM_8      // GPIO8  — Onboard WS2812 RGB Status LED
+#define PIN_FLUSH_BUTTON  GPIO_NUM_12     // GPIO12 — Manual Flush Button (Active LOW with internal pull-up)
 
 // Reserved for future use — uncomment when second SSR and valve are needed
 // #define PIN_SSR2    GPIO_NUM_5    // GPIO5  — SSR 2 circuit (not currently active)
@@ -88,9 +93,11 @@ static const char *TAG = "biochar";
 // ===============================================================
 // ------------------- DRY DETECTION (PRESSURE) ------------------
 // ===============================================================
-#define CYCLE_START_PSI   2.0f       // Pressure must exceed this to start a cycle
-#define DRY_PRESSURE_MAX  1.0f       // PSI below which dry detection is considered
-#define DRY_TIME_MS       15000UL    // Must stay dry for this long to latch
+#define CYCLE_START_PSI      2.0f       // Pressure must exceed this to start a cycle
+#define DRY_PRESSURE_MAX     1.0f       // PSI below which dry detection is considered
+#define DRY_TIME_MS          15000UL    // Must stay dry for this long to latch
+#define MAX_CYCLE_TIME_MS    (30UL * 60UL * 1000UL) // 30 minutes maximum cycle duration
+#define LONG_PRESS_RESET_MS  3000LL     // 3 seconds long-press to reset emergency trip
 
 // ===============================================================
 // ------------------ HEATER TEMPERATURE CONTROL -----------------
@@ -107,12 +114,19 @@ static const char *TAG = "biochar";
 static bool    valve_on            = false;
 static bool    cycle_active        = false;
 static bool    dry_latched         = false;
+static bool    has_pressurized     = false;
+static bool    emergency_tripped   = false;
 static int64_t dry_candidate_start = 0;
+static int64_t cycle_start_time    = 0;
+static int64_t button_press_start  = 0;
+static bool    button_was_pressed  = false;
+static bool    long_press_handled  = false;
 static float   temp_ema            = NAN;
 static int64_t window_start        = 0;
 
 static spi_device_handle_t       max31855_handle;
 static adc_oneshot_unit_handle_t adc_handle;
+static led_strip_handle_t        led_strip = NULL;
 
 // ===============================================================
 // -------------------------- HELPERS ----------------------------
@@ -128,7 +142,38 @@ static float adc_to_psi(int adc_raw) {
 static void set_heater(bool on) {
     // Active HIGH: GPIO4 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
     // Active LOW (off):  GPIO4 LOW  → BJT OFF → SSR OFF
-    gpio_set_level(PIN_HEATER, on ? 1 : 0);
+    gpio_set_level(PIN_HEATER, (on && !emergency_tripped) ? 1 : 0);
+}
+
+// ===============================================================
+// -------------------- WS2812 RGB LED DRIVER --------------------
+// ===============================================================
+static void init_led_strip(void) {
+    led_strip_config_t strip_config = {
+        .strip_gpio_num   = PIN_LED_WS2812,
+        .max_leds         = 1,
+        .led_pixel_format = LED_PIXEL_FORMAT_GRB,
+        .led_model        = LED_MODEL_WS2812,
+        .flags.invert_out = false,
+    };
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src       = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, // 10 MHz
+        .flags.with_dma = false,
+    };
+    esp_err_t err = led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
+    if (err == ESP_OK && led_strip) {
+        led_strip_clear(led_strip);
+    } else {
+        ESP_LOGW(TAG, "WS2812 LED strip init returned: %d", err);
+    }
+}
+
+static void set_led_color(uint8_t r, uint8_t g, uint8_t b) {
+    if (led_strip) {
+        led_strip_set_pixel(led_strip, 0, r, g, b);
+        led_strip_refresh(led_strip);
+    }
 }
 
 // ===============================================================
@@ -207,7 +252,7 @@ static void init_adc(void) {
 
 static void init_gpio(void) {
     gpio_config_t io_conf = {
-        .pin_bit_mask  = (1ULL << PIN_VALVE) | (1ULL << PIN_HEATER),
+        .pin_bit_mask  = (1ULL << PIN_VALVE) | (1ULL << PIN_HEATER) | (1ULL << PIN_LED_WS2812),
         .mode          = GPIO_MODE_OUTPUT,
         .pull_up_en    = GPIO_PULLUP_DISABLE,
         .pull_down_en  = GPIO_PULLDOWN_ENABLE,   // Pull-down keeps BJT off at boot
@@ -215,8 +260,20 @@ static void init_gpio(void) {
     };
     ESP_ERROR_CHECK(gpio_config(&io_conf));
 
-    gpio_set_level(PIN_VALVE,   0);   // Valve 1 OFF
-    gpio_set_level(PIN_HEATER,  0);   // SSR 1 OFF (BJT base LOW)
+    gpio_set_level(PIN_VALVE,      0);   // Valve 1 OFF
+    gpio_set_level(PIN_HEATER,     0);   // SSR 1 OFF (BJT base LOW)
+
+    init_led_strip();
+
+    // Configure Flush Button input
+    gpio_config_t btn_conf = {
+        .pin_bit_mask  = (1ULL << PIN_FLUSH_BUTTON),
+        .mode          = GPIO_MODE_INPUT,
+        .pull_up_en    = GPIO_PULLUP_ENABLE,     // Pull-up resistor (Active LOW button press to GND)
+        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&btn_conf));
 
     // Uncomment when SSR 2 and Valve 2 circuits are populated on the board:
     // gpio_config_t io_conf2 = {
@@ -248,8 +305,10 @@ static void control_task(void *arg) {
     ESP_LOGI(TAG, "  GPIO3  → Pressure Sensor ADC");
     ESP_LOGI(TAG, "  GPIO4  → SSR 1 (active HIGH, BJT driver)");
     ESP_LOGI(TAG, "  GPIO5  → SSR 2 (reserved)");
+    ESP_LOGI(TAG, "  GPIO8  → WS2812 RGB LED Status Indicator");
     ESP_LOGI(TAG, "  GPIO10 → Solenoid Valve 1");
     ESP_LOGI(TAG, "  GPIO11 → Solenoid Valve 2 (reserved)");
+    ESP_LOGI(TAG, "  GPIO12 → Flush Button (Active LOW)");
 
     window_start = esp_timer_get_time() / 1000LL;
 
@@ -273,21 +332,91 @@ static void control_task(void *arg) {
         float psi = adc_to_psi(adc_raw);
 
         // ------------------- VALVE CONTROL -----------------
-        if (!valve_on && psi >= PSI_ON_THRESHOLD)        valve_on = true;
-        else if (valve_on && psi <= PSI_OFF_THRESHOLD)   valve_on = false;
+        if (emergency_tripped) {
+            valve_on = true;  // Latch valve OPEN in emergency trip
+        } else {
+            if (!valve_on && psi >= PSI_ON_THRESHOLD)        valve_on = true;
+            else if (valve_on && psi <= PSI_OFF_THRESHOLD)   valve_on = false;
+        }
         gpio_set_level(PIN_VALVE, valve_on ? 1 : 0);
 
-        // ------------------- DRY DETECTION -----------------
-        if (!dry_latched) {
-            if (!cycle_active && psi >= CYCLE_START_PSI)
-                cycle_active = true;
+        // ------------------- FLUSH BUTTON & EMERGENCY RESET -
+        bool button_pressed = (gpio_get_level(PIN_FLUSH_BUTTON) == 0); // Active LOW
+        if (button_pressed) {
+            if (!button_was_pressed) {
+                button_was_pressed = true;
+                button_press_start = now;
+                long_press_handled = false;
+            } else {
+                int64_t hold_duration = now - button_press_start;
+                if (hold_duration >= LONG_PRESS_RESET_MS && !long_press_handled) {
+                    long_press_handled = true;
+                    if (emergency_tripped) {
+                        emergency_tripped = false;
+                        valve_on = false;
+                        dry_latched = false;
+                        has_pressurized = false;
+                        cycle_active = false;
+                        ESP_LOGI(TAG, "✅ EMERGENCY TRIP RESET: System returned to IDLE!");
+                    }
+                }
+            }
+        } else {
+            if (button_was_pressed) {
+                int64_t hold_duration = now - button_press_start;
+                button_was_pressed = false;
 
-            if (cycle_active) {
-                if (psi <= DRY_PRESSURE_MAX) {
+                if (!long_press_handled && hold_duration < LONG_PRESS_RESET_MS) {
+                    if (!cycle_active && !emergency_tripped) {
+                        cycle_active = true;
+                        cycle_start_time = now;
+                        dry_latched = false;
+                        has_pressurized = false;
+                        dry_candidate_start = 0;
+                        ESP_LOGI(TAG, "🚽 FLUSH BUTTON PRESSED: Biochar cycle initiated manually!");
+                    }
+                }
+            }
+        }
+
+        // Pressure-based auto cycle start (if not already started)
+        if (!cycle_active && !emergency_tripped && psi >= CYCLE_START_PSI) {
+            cycle_active = true;
+            cycle_start_time = now;
+            dry_latched = false;
+            has_pressurized = true;
+            dry_candidate_start = 0;
+            ESP_LOGI(TAG, "🔥 CYCLE STARTED: Pressure exceeded threshold (%.2f PSI)", psi);
+        }
+
+        // ------------------- CYCLE TIMEOUT & DRY MONITOR ---
+        if (cycle_active) {
+            int64_t cycle_elapsed = now - cycle_start_time;
+
+            if (psi >= CYCLE_START_PSI) {
+                has_pressurized = true;
+            }
+
+            // Check 30-minute max cycle timeout
+            if (cycle_elapsed >= (int64_t)MAX_CYCLE_TIME_MS) {
+                ESP_LOGI(TAG, "⏰ CYCLE COMPLETE: Reached maximum cycle duration (30 mins). Resetting to IDLE.");
+                cycle_active = false;
+                dry_latched = false;
+                has_pressurized = false;
+                dry_candidate_start = 0;
+                cycle_start_time = 0;
+            } else if (!dry_latched && !emergency_tripped) {
+                // Dryness detection: only triggers AFTER system has pressurized
+                if (has_pressurized && psi <= DRY_PRESSURE_MAX) {
                     if (dry_candidate_start == 0)
                         dry_candidate_start = now;
-                    if ((now - dry_candidate_start) >= (int64_t)DRY_TIME_MS)
+                    if ((now - dry_candidate_start) >= (int64_t)DRY_TIME_MS) {
                         dry_latched = true;
+                        cycle_active = false;
+                        has_pressurized = false;
+                        cycle_start_time = 0;
+                        ESP_LOGI(TAG, "🌱 DRY LATCHED: Moisture evaporated. Biochar drying stage complete!");
+                    }
                 } else {
                     dry_candidate_start = 0;
                 }
@@ -312,15 +441,38 @@ static void control_task(void *arg) {
 
         set_heater(heater_on);
 
+        // ------------------- WS2812 LED STATUS INDICATOR ---
+        static bool flash_state = false;
+        static int64_t last_flash_toggle = 0;
+        if (now - last_flash_toggle >= 500) {
+            flash_state = !flash_state;
+            last_flash_toggle = now;
+        }
+
+        if (emergency_tripped) {
+            // RED Flashing
+            if (flash_state) set_led_color(255, 0, 0);
+            else             set_led_color(0, 0, 0);
+        } else if (cycle_active) {
+            // ORANGE/YELLOW
+            set_led_color(255, 120, 0);
+        } else if (dry_latched) {
+            // BLUE
+            set_led_color(0, 0, 255);
+        } else {
+            // GREEN (IDLE / Ready)
+            set_led_color(0, 255, 0);
+        }
+
         // ------------------- LOG OUTPUT --------------------
         ESP_LOGI(TAG,
-            "P=%.2fpsi | Valve=%s | Heater=%s | BJT=%s | DRY=%s | T=%s | Duty=%.0f%%",
+            "P=%.2fpsi | Valve=%s | Heater=%s | BJT=%s | DRY=%s | CycleActive=%s | Duty=%.0f%%",
             psi,
             valve_on    ? "ON"   : "OFF",
             heater_on   ? "ON"   : "OFF",
             gpio_get_level(PIN_HEATER) ? "HIGH" : "LOW",
             dry_latched ? "YES"  : "NO",
-            temp_valid  ? (char[16]){0}  : "NA",
+            cycle_active ? "YES" : "NO",
             duty * 100.0f
         );
 
