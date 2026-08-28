@@ -25,7 +25,7 @@ echo "Navigating to biochar conductive firmware directory: $PROJECT_DIR"
 cd "$PROJECT_DIR"
 
 echo "Cleaning old build files to prevent cache conflicts..."
-rm -rf build
+rm -rf build sdkconfig sdkconfig.old
 idf.py fullclean
 
 echo "Setting target to esp32h2..."
