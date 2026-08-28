@@ -23,6 +23,8 @@ cd /d "%PROJECT_DIR%"
 
 echo Cleaning old build files to prevent cache conflicts...
 if exist build rmdir /s /q build
+if exist sdkconfig del /q sdkconfig
+if exist sdkconfig.old del /q sdkconfig.old
 idf.py fullclean
 
 echo Setting target to esp32h2...
