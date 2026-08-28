@@ -29,7 +29,11 @@ echo Setting target to esp32h2...
 idf.py set-target esp32h2
 
 echo Building biochar induction firmware...
-idf.py build
+if "%~1"=="" (
+    idf.py build
+) else (
+    idf.py build %*
+)
 
 echo Build successful.
 endlocal

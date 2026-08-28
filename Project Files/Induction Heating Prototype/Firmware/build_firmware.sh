@@ -32,6 +32,10 @@ echo "Setting target to esp32h2..."
 idf.py set-target esp32h2
 
 echo "Building biochar induction firmware..."
-idf.py build
+if [ $# -eq 0 ]; then
+    idf.py build
+else
+    idf.py build "$@"
+fi
 
 echo "Build successful."
