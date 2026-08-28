@@ -20,7 +20,8 @@ The Phase 2 Dual Induction Heating Prototype upgrades the biochar reactor archit
 - **Pressure Sensing:** 0–15 PSI range (0–5V analog output, mapped to ADC1_CH2 / GPIO3 via 0-3.3V divider)
 - **Valve Control:** Solenoid Valve 1 (MOSFET-driven, GPIO10) for pressure relief and steam swing drying
 - **Recirculating Pump:** Optional high-current MOSFET driver on GPIO11 (Solenoid 2 channel) for heat exchanger loop cooling
-- **Flush Button:** Manual push switch on GPIO12 (Active LOW with internal pull-up) to initiate biochar cycle with 30-min auto-timeout
+- **Flush Button:** Manual push switch on GPIO12 (Active LOW with internal pull-up) to initiate biochar cycle (30-min auto-timeout) and reset emergency trip via 3s long-press
+- **Status LED:** Onboard WS2812 RGB LED on GPIO8 (Green=IDLE/Ready, Orange=Active Cycle, Blue=Dry Latched/Complete, Flashing Red=Emergency Trip)
 - **Thermocouple Interface:** MAX31855 K-type breakout via SPI (GPIO0 CLK, GPIO1 CS, GPIO2 MISO)
 
 ---
