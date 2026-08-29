@@ -15,7 +15,8 @@ if not exist "%IDF_PATH%\install.bat" (
     pushd "%IDF_PATH%"
     git fetch origin
     git checkout release/v5.3
-    git pull
+    git pull --recurse-submodules
+    git submodule update --init --recursive
     popd
 )
 
