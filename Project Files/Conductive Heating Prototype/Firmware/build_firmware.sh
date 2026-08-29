@@ -17,7 +17,8 @@ elif [ -d "$IDF_PATH/.git" ]; then
     cd "$IDF_PATH"
     git fetch origin || true
     git checkout release/v5.3 || true
-    git pull || true
+    git pull --recurse-submodules || true
+    git submodule update --init --recursive || true
 fi
 
 echo "Installing ESP-IDF tools..."
