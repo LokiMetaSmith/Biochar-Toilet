@@ -85,11 +85,12 @@ static const char *TAG = "biochar_induction";
 #define MAX_SAFE_TEMP_C   250.0f   // Overtemp limit (kill heaters, latch valve open)
 
 // ===============================================================
-// --------------------- VALVE HYSTERESIS ------------------------
+// --------------------- LOGARITHMIC VALVE CONTROL ---------------
 // ===============================================================
-// Scaled thresholds for 0-15 PSI full-scale range:
-#define PSI_ON_THRESHOLD   1.20f   // Open valve above this pressure (8% full scale)
-#define PSI_OFF_THRESHOLD  1.05f   // Close valve below this pressure (7% full scale)
+#define MIN_SEAL_PRESSURE  4.0f    // Hard floor to preserve seal integrity
+#define TARGET_PRESSURE    15.0f   // Maximum target pressure before safety limits
+#define TARGET_TEMP_C      121.0f  // Target temperature for sterilization release
+#define VALVE_WINDOW_MS    2000    // Valve PWM window period (ms)
 
 // ===============================================================
 // ------------------- DRY DETECTION (PRESSURE) ------------------
@@ -125,6 +126,7 @@ static bool    button_was_pressed  = false;
 static bool    long_press_handled  = false;
 static float   temp_ema            = NAN;
 static int64_t window_start        = 0;
+static int64_t valve_window_start  = 0;
 
 static spi_device_handle_t       max31855_handle;
 static adc_oneshot_unit_handle_t adc_handle;
@@ -328,6 +330,7 @@ static void control_task(void *arg) {
     ESP_LOGI(TAG, "  GPIO12 → Flush Button (Active LOW)");
 
     window_start = esp_timer_get_time() / 1000LL;
+    valve_window_start = window_start;
 
     while (1) {
         int64_t now = esp_timer_get_time() / 1000LL;   // ms
@@ -356,12 +359,48 @@ static void control_task(void *arg) {
             }
         }
 
-        // ------------------- VALVE CONTROL -----------------
+        // ------------------- LOGARITHMIC VALVE CONTROL -----------------
+        static bool release_active = false;
+
         if (emergency_tripped) {
             valve_on = true;  // Latch valve OPEN in emergency trip
+            release_active = false;
         } else {
-            if (!valve_on && psi >= PSI_ON_THRESHOLD)        valve_on = true;
-            else if (valve_on && psi <= PSI_OFF_THRESHOLD)   valve_on = false;
+            // Trigger release cycle only when both pressure and temp targets are met
+            if (!release_active && psi >= TARGET_PRESSURE && temp_valid && temp_ema >= TARGET_TEMP_C) {
+                release_active = true;
+            }
+
+            if (release_active) {
+                // CRITICAL SAFETY FLOOR: If we drop to or below seal pressure, close completely and end release
+                if (psi <= MIN_SEAL_PRESSURE) {
+                    valve_on = false;
+                    release_active = false;
+                } else {
+                    float clamped_psi = psi > TARGET_PRESSURE ? TARGET_PRESSURE : psi;
+                    float range_p = TARGET_PRESSURE - MIN_SEAL_PRESSURE;
+                    float duty_cycle = 0.0f;
+
+                    if (range_p > 0.0f) {
+                        // Higher pressure -> larger t -> higher duty cycle
+                        // Lower pressure -> smaller t -> lower duty cycle
+                        float t = (clamped_psi - MIN_SEAL_PRESSURE) / range_p;
+                        float log_factor = logf(1.0f + (t * 1.71828f)) / 1.0f;
+                        duty_cycle = log_factor;
+                        if (duty_cycle < 0.0f) duty_cycle = 0.0f;
+                        if (duty_cycle > 1.0f) duty_cycle = 1.0f;
+                    }
+
+                    if ((now - valve_window_start) >= (int64_t)VALVE_WINDOW_MS) {
+                        valve_window_start = now;
+                    }
+
+                    valve_on = ((now - valve_window_start) < (int64_t)(duty_cycle * VALVE_WINDOW_MS));
+                }
+            } else {
+                // Keep valve closed while not releasing
+                valve_on = false;
+            }
         }
         gpio_set_level(PIN_VALVE, valve_on ? 1 : 0);
 
