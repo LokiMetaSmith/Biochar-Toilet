@@ -6,7 +6,7 @@ class ValveController:
     Controls the steam valve for the Biochar Toilet reaction vessel with safety interlocks.
     Uses time-proportional control (PWM simulation) for logarithmic pressure release.
     """
-    def __init__(self, target_pressure=15.0, target_temperature=121.0, min_seal_pressure=4.0, max_safe_pressure=18.0, max_safe_temperature=250.0, window_ms=2000, start_time_ms=None):
+    def __init__(self, target_pressure=8.0, target_temperature=121.0, min_seal_pressure=4.0, max_safe_pressure=18.0, max_safe_temperature=250.0, window_ms=2000, start_time_ms=None):
         """
         Initializes the ValveController.
 

@@ -86,7 +86,7 @@ static const char *TAG = "biochar";
 // --------------------- LOGARITHMIC VALVE CONTROL ---------------
 // ===============================================================
 #define MIN_SEAL_PRESSURE  4.0f    // Hard floor to preserve seal integrity
-#define TARGET_PRESSURE    15.0f   // Maximum target pressure before safety limits
+#define TARGET_PRESSURE    8.0f    // Maximum target pressure before safety limits
 #define TARGET_TEMP_C      121.0f  // Target temperature for sterilization release
 #define VALVE_WINDOW_MS    2000    // Valve PWM window period (ms)
 
