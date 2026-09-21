@@ -111,6 +111,26 @@ static const char *TAG = "biochar";
 // ===============================================================
 // --------------------------- STATE -----------------------------
 // ===============================================================
+typedef enum {
+    STATE_OFF,
+    STATE_HEATING,
+    STATE_COOLING,
+    STATE_ERROR
+} system_state_t;
+
+static system_state_t current_state = STATE_OFF;
+static int negative_pressure_counter = 0;
+static int64_t cooling_start_time = 0;
+static float base_temp_for_runaway = -1.0f;
+static float base_temp_for_absolute_runaway = -1.0f;
+
+#define STAGNATION_WINDOW_SIZE 180
+static float heating_temp_history[STAGNATION_WINDOW_SIZE];
+static int64_t heating_time_history[STAGNATION_WINDOW_SIZE];
+static int history_head = 0;
+static int history_count = 0;
+static int64_t last_history_record_time = 0;
+
 static bool    valve_on            = false;
 static bool    cycle_active        = false;
 static bool    dry_latched         = false;
@@ -142,7 +162,7 @@ static float adc_to_psi(int adc_raw) {
 static void set_heater(bool on) {
     // Active HIGH: GPIO4 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
     // Active LOW (off):  GPIO4 LOW  → BJT OFF → SSR OFF
-    gpio_set_level(PIN_HEATER, (on && !emergency_tripped) ? 1 : 0);
+    gpio_set_level(PIN_HEATER, (on && !emergency_tripped && current_state == STATE_HEATING) ? 1 : 0);
 }
 
 // ===============================================================
@@ -301,6 +321,38 @@ static void init_gpio(void) {
 // ===============================================================
 // ------------------------- MAIN TASK ---------------------------
 // ===============================================================
+static void transition_to(system_state_t new_state, float current_temp, int64_t now) {
+    if (current_state == STATE_ERROR) return;
+
+    current_state = new_state;
+
+    if (new_state == STATE_COOLING || new_state == STATE_OFF) {
+        cooling_start_time = now;
+    }
+
+    if (new_state == STATE_OFF || new_state == STATE_COOLING) {
+        base_temp_for_absolute_runaway = current_temp;
+        base_temp_for_runaway = current_temp;
+    }
+
+    if (new_state == STATE_HEATING) {
+        history_head = 0;
+        history_count = 0;
+        last_history_record_time = 0;
+        if (!isnan(current_temp)) {
+            heating_temp_history[0] = current_temp;
+            heating_time_history[0] = now;
+            history_head = 1;
+            history_count = 1;
+            last_history_record_time = now;
+        }
+    }
+
+    if (new_state == STATE_ERROR) {
+        emergency_tripped = true;
+    }
+}
+
 static void control_task(void *arg) {
     ESP_LOGI(TAG, "╔════════════════════════════════════════════════╗");
     ESP_LOGI(TAG, "║   SYSTEM READY: INTEGRATED CONTROL SYSTEM     ║");
@@ -342,10 +394,97 @@ static void control_task(void *arg) {
         adc_oneshot_read(adc_handle, PIN_ADC_PRESSURE, &adc_raw);
         float psi = adc_to_psi(adc_raw);
 
+        // ------------------- SAFETY INTERLOCKS -----------------
+        if (current_state != STATE_ERROR) {
+            // Lazy initialization of base temps
+            if (current_state == STATE_OFF || current_state == STATE_COOLING) {
+                if (base_temp_for_absolute_runaway < 0.0f && temp_valid) {
+                    base_temp_for_absolute_runaway = temp_ema;
+                }
+                if (base_temp_for_runaway < 0.0f && temp_valid) {
+                    base_temp_for_runaway = temp_ema;
+                }
+            }
+
+            // 1. Negative Pressure Failure
+            if (psi < -0.2f) {
+                negative_pressure_counter++;
+                if (negative_pressure_counter >= 3) {
+                    ESP_LOGE(TAG, "CRITICAL ERROR: Negative pressure detected (%.2f PSI)", psi);
+                    valve_on = true; // Vent valve OPEN
+                    transition_to(STATE_ERROR, temp_ema, now);
+                }
+            } else {
+                negative_pressure_counter = 0;
+            }
+
+            // 2. Unintended Temperature Rise
+            if ((current_state == STATE_OFF || current_state == STATE_COOLING) && temp_valid) {
+                // ABSOLUTE 50C RUNAWAY: TRIPS IMMEDIATELY, NO GRACE PERIOD
+                if (base_temp_for_absolute_runaway >= 0.0f) {
+                    if (temp_ema - base_temp_for_absolute_runaway >= 50.0f) {
+                        ESP_LOGE(TAG, "CRITICAL ERROR: Absolute thermal runaway (+50C in OFF/COOLING)");
+                        transition_to(STATE_ERROR, temp_ema, now);
+                    } else if (temp_ema < base_temp_for_absolute_runaway) {
+                        base_temp_for_absolute_runaway = temp_ema;
+                    }
+                }
+
+                // 5C STUCK BJT RUNAWAY: SUPPRESSED BY 60s GRACE PERIOD
+                if (base_temp_for_runaway >= 0.0f) {
+                    bool grace = ((current_state == STATE_COOLING || current_state == STATE_OFF) && cooling_start_time > 0 && (now - cooling_start_time) <= 60000);
+                    if (!grace) {
+                        if (temp_ema - base_temp_for_runaway >= 5.0f) {
+                            ESP_LOGE(TAG, "CRITICAL ERROR: Stuck BJT thermal runaway (+5C)");
+                            transition_to(STATE_ERROR, temp_ema, now);
+                        } else if (temp_ema < base_temp_for_runaway) {
+                            base_temp_for_runaway = temp_ema;
+                        }
+                    }
+                }
+            }
+
+            // 3. Stagnation in Heating
+            if (current_state == STATE_HEATING && temp_valid) {
+                // Rate limit recording to ~1 second
+                if (now - last_history_record_time >= 1000) {
+                    heating_temp_history[history_head] = temp_ema;
+                    heating_time_history[history_head] = now;
+                    last_history_record_time = now;
+                    history_head = (history_head + 1) % STAGNATION_WINDOW_SIZE;
+                    if (history_count < STAGNATION_WINDOW_SIZE) history_count++;
+                }
+
+                int oldest_idx = history_count == STAGNATION_WINDOW_SIZE ? history_head : 0;
+
+                while (history_count > 1 && (now - heating_time_history[oldest_idx]) > 180000) {
+                    oldest_idx = (oldest_idx + 1) % STAGNATION_WINDOW_SIZE;
+                    history_count--;
+                }
+
+                if (history_count > 1 && (now - heating_time_history[oldest_idx]) >= 179500) {
+                    float oldest_temp = heating_temp_history[oldest_idx];
+                    if (temp_ema - oldest_temp < 3.0f) {
+                        ESP_LOGE(TAG, "CRITICAL ERROR: Heater stagnation (temp rise < 3C over 180s)");
+                        transition_to(STATE_ERROR, temp_ema, now);
+                    }
+                }
+            }
+
+            // Sync states based on active cycle
+            if (cycle_active && !dry_latched) {
+                if (current_state != STATE_HEATING) transition_to(STATE_HEATING, temp_ema, now);
+            } else if (current_state == STATE_COOLING) {
+                if (current_state != STATE_COOLING) transition_to(STATE_COOLING, temp_ema, now);
+            } else {
+                if (current_state != STATE_OFF) transition_to(STATE_OFF, temp_ema, now);
+            }
+        }
+
         // ------------------- LOGARITHMIC VALVE CONTROL -----------------
         static bool release_active = false;
 
-        if (emergency_tripped) {
+        if (current_state == STATE_ERROR) {
             valve_on = true;  // Latch valve OPEN in emergency trip
             release_active = false;
         } else {
@@ -400,6 +539,10 @@ static void control_task(void *arg) {
                     long_press_handled = true;
                     if (emergency_tripped) {
                         emergency_tripped = false;
+                        current_state = STATE_OFF;
+                        negative_pressure_counter = 0;
+                        base_temp_for_runaway = -1.0f;
+                        base_temp_for_absolute_runaway = -1.0f;
                         valve_on = false;
                         dry_latched = false;
                         has_pressurized = false;
@@ -500,7 +643,7 @@ static void control_task(void *arg) {
             // RED Flashing
             if (flash_state) set_led_color(255, 0, 0);
             else             set_led_color(0, 0, 0);
-        } else if (cycle_active) {
+        } else if (current_state == STATE_HEATING) {
             // ORANGE/YELLOW
             set_led_color(255, 120, 0);
         } else if (dry_latched) {
