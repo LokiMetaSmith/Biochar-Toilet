@@ -156,7 +156,7 @@ static float fmap(float x, float in_min, float in_max, float out_min, float out_
 }
 
 static float adc_to_psi(int adc_raw) {
-    return fmap((float)adc_raw, ADC_ZERO, ADC_FULL, 0.0f, 100.0f);
+    return fmap((float)adc_raw, ADC_ZERO, ADC_FULL, 0.0f, 100.0f) + 10.68f;
 }
 
 static void set_heater(bool on) {
@@ -548,6 +548,14 @@ static void control_task(void *arg) {
                         has_pressurized = false;
                         cycle_active = false;
                         ESP_LOGI(TAG, "✅ EMERGENCY TRIP RESET: System returned to IDLE!");
+                    } else if (cycle_active) {
+                        cycle_active = false;
+                        dry_latched = false;
+                        has_pressurized = false;
+                        dry_candidate_start = 0;
+                        cycle_start_time = 0;
+                        current_state = STATE_OFF;
+                        ESP_LOGI(TAG, "🛑 CYCLE CANCELLED: Biochar cycle manually cancelled via long press!");
                     }
                 }
             }
@@ -618,7 +626,7 @@ static void control_task(void *arg) {
         bool  heater_on = false;
         float duty      = 0.0f;
 
-        if (!dry_latched && temp_valid) {
+        if (cycle_active && !dry_latched && temp_valid) {
             float error = SETPOINT_C - temp_ema;
             duty = (temp_ema >= SETPOINT_C + HYST_C) ? 0.0f : KP * error;
             if (duty < 0.0f) duty = 0.0f;
