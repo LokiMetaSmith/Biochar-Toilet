@@ -88,7 +88,8 @@ static const char *TAG = "biochar";
 #define MIN_SEAL_PRESSURE  4.0f    // Hard floor to preserve seal integrity
 #define TARGET_PRESSURE    8.0f    // Maximum target pressure before safety limits
 #define TARGET_TEMP_C      121.0f  // Target temperature for sterilization release
-#define VALVE_WINDOW_MS    2000    // Valve PWM window period (ms)
+#define VALVE_WINDOW_MS    2000    // Valve maximum burst duration (ms)
+#define VALVE_COOLDOWN_MS  2000    // Mandatory cooldown duration between bursts (ms)
 
 // ===============================================================
 // ------------------- DRY DETECTION (PRESSURE) ------------------
@@ -483,6 +484,9 @@ static void control_task(void *arg) {
 
         // ------------------- LOGARITHMIC VALVE CONTROL -----------------
         static bool release_active = false;
+        static int64_t burst_start_time = 0;
+        static int64_t burst_duration = 0;
+        static int64_t cooldown_start_time = -VALVE_COOLDOWN_MS;
 
         if (current_state == STATE_ERROR) {
             valve_on = true;  // Latch valve OPEN in emergency trip
@@ -499,25 +503,34 @@ static void control_task(void *arg) {
                     valve_on = false;
                     release_active = false;
                 } else {
-                    float clamped_psi = psi > TARGET_PRESSURE ? TARGET_PRESSURE : psi;
-                    float range_p = TARGET_PRESSURE - MIN_SEAL_PRESSURE;
-                    float duty_cycle = 0.0f;
+                    if (valve_on) {
+                        // We are in an active burst
+                        if ((now - burst_start_time) >= burst_duration) {
+                            // Burst finished, close valve and start cooldown
+                            valve_on = false;
+                            cooldown_start_time = now;
+                        }
+                    } else {
+                        // Valve is closed. Are we in cooldown?
+                        if ((now - cooldown_start_time) >= (int64_t)VALVE_COOLDOWN_MS) {
+                            // Cooldown finished, start a new burst
+                            float clamped_psi = psi > TARGET_PRESSURE ? TARGET_PRESSURE : psi;
+                            float range_p = TARGET_PRESSURE - MIN_SEAL_PRESSURE;
+                            float duty_cycle = 0.0f;
 
-                    if (range_p > 0.0f) {
-                        // Higher pressure -> larger t -> higher duty cycle
-                        // Lower pressure -> smaller t -> lower duty cycle
-                        float t = (clamped_psi - MIN_SEAL_PRESSURE) / range_p;
-                        float log_factor = logf(1.0f + (t * 1.71828f)) / 1.0f;
-                        duty_cycle = log_factor;
-                        if (duty_cycle < 0.0f) duty_cycle = 0.0f;
-                        if (duty_cycle > 1.0f) duty_cycle = 1.0f;
+                            if (range_p > 0.0f) {
+                                float t = (clamped_psi - MIN_SEAL_PRESSURE) / range_p;
+                                float log_factor = logf(1.0f + (t * 1.71828f)) / 1.0f;
+                                duty_cycle = log_factor;
+                                if (duty_cycle < 0.0f) duty_cycle = 0.0f;
+                                if (duty_cycle > 1.0f) duty_cycle = 1.0f;
+                            }
+
+                            burst_duration = (int64_t)(duty_cycle * VALVE_WINDOW_MS);
+                            burst_start_time = now;
+                            valve_on = true;
+                        }
                     }
-
-                    if ((now - valve_window_start) >= (int64_t)VALVE_WINDOW_MS) {
-                        valve_window_start = now;
-                    }
-
-                    valve_on = ((now - valve_window_start) < (int64_t)(duty_cycle * VALVE_WINDOW_MS));
                 }
             } else {
                 // Keep valve closed while not releasing
