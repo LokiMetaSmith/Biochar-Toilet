@@ -79,8 +79,8 @@ static const char *TAG = "biochar";
 // ===============================================================
 // ------------------- PRESSURE CALIBRATION ----------------------
 // ===============================================================
-#define ADC_ZERO      320.0f    // ADC raw value at 0 PSI
-#define ADC_FULL      3008.0f   // ADC raw value at 100 PSI
+#define ADC_ZERO      33.0f    // ADC raw value at 0 PSI
+#define ADC_FULL      2721.0f   // ADC raw value at 100 PSI
 
 // ===============================================================
 // --------------------- LOGARITHMIC VALVE CONTROL ---------------
