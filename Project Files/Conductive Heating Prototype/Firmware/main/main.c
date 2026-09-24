@@ -569,6 +569,7 @@ static void control_task(void *arg) {
             }
         }
 
+        /*
         // Pressure-based auto cycle start (if not already started)
         if (!cycle_active && !emergency_tripped && psi >= CYCLE_START_PSI) {
             cycle_active = true;
@@ -578,7 +579,7 @@ static void control_task(void *arg) {
             dry_candidate_start = 0;
             ESP_LOGI(TAG, "🔥 CYCLE STARTED: Pressure exceeded threshold (%.2f PSI)", psi);
         }
-
+        */
         // ------------------- CYCLE TIMEOUT & DRY MONITOR ---
         if (cycle_active) {
             int64_t cycle_elapsed = now - cycle_start_time;
