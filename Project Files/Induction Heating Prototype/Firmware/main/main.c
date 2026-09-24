@@ -163,13 +163,13 @@ static float adc_to_psi(int adc_raw) {
 }
 
 static void set_main_heater(bool on) {
-    // Active LOW: SSR ON when pin is LOW
-    gpio_set_level(PIN_HEATER_MAIN, (on && !emergency_tripped) ? 0 : 1);
+    // Active HIGH: GPIO4 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
+    gpio_set_level(PIN_HEATER_MAIN, (on && !emergency_tripped) ? 1 : 0);
 }
 
 static void set_catalyst_heater(bool on) {
-    // Active LOW: SSR ON when pin is LOW
-    gpio_set_level(PIN_HEATER_CATALYST, (on && !emergency_tripped) ? 0 : 1);
+    // Active HIGH: GPIO5 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
+    gpio_set_level(PIN_HEATER_CATALYST, (on && !emergency_tripped) ? 1 : 0);
 }
 
 static void set_pump(bool on) {
@@ -296,6 +296,8 @@ static void init_gpio(void) {
     gpio_config_t out_conf = {
         .pin_bit_mask  = (1ULL << PIN_VALVE)           |
                          (1ULL << PIN_PUMP)            |
+                         (1ULL << PIN_HEATER_MAIN)     |
+                         (1ULL << PIN_HEATER_CATALYST) |
                          (1ULL << PIN_LED_WS2812),
         .mode          = GPIO_MODE_OUTPUT,
         .pull_up_en    = GPIO_PULLUP_DISABLE,
@@ -304,20 +306,10 @@ static void init_gpio(void) {
     };
     ESP_ERROR_CHECK(gpio_config(&out_conf));
 
-    gpio_config_t heater_conf = {
-        .pin_bit_mask  = (1ULL << PIN_HEATER_MAIN)     |
-                         (1ULL << PIN_HEATER_CATALYST),
-        .mode          = GPIO_MODE_OUTPUT,
-        .pull_up_en    = GPIO_PULLUP_ENABLE,     // Pull-up keeps SSR off at boot
-        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
-        .intr_type     = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&heater_conf));
-
     gpio_set_level(PIN_VALVE,           0);   // Solenoid Valve 1 OFF
     gpio_set_level(PIN_PUMP,            0);   // Pump / Valve 2 OFF
-    gpio_set_level(PIN_HEATER_MAIN,     1);   // SSR 1 Main Coil OFF (Active LOW)
-    gpio_set_level(PIN_HEATER_CATALYST, 1);   // SSR 2 Catalyst Heater OFF (Active LOW)
+    gpio_set_level(PIN_HEATER_MAIN,     0);   // SSR 1 Main Coil OFF
+    gpio_set_level(PIN_HEATER_CATALYST, 0);   // SSR 2 Catalyst Heater OFF
     gpio_set_level(PIN_LED_WS2812,      0);   // WS2812 LED pin LOW
 
     set_led_color(0, 0, 0);                   // WS2812 reset

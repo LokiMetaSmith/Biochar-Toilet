@@ -160,8 +160,9 @@ static float adc_to_psi(int adc_raw) {
 }
 
 static void set_heater(bool on) {
-    // Active LOW: SSR ON when pin is LOW
-    gpio_set_level(PIN_HEATER, (on && !emergency_tripped && current_state == STATE_HEATING) ? 0 : 1);
+    // Active HIGH: GPIO4 HIGH → BJT base HIGH → collector completes SSR circuit → SSR ON
+    // Active LOW (off):  GPIO4 LOW  → BJT OFF → SSR OFF
+    gpio_set_level(PIN_HEATER, (on && !emergency_tripped && current_state == STATE_HEATING) ? 1 : 0);
 }
 
 // ===============================================================
@@ -280,7 +281,7 @@ static void init_adc(void) {
 
 static void init_gpio(void) {
     gpio_config_t io_conf = {
-        .pin_bit_mask  = (1ULL << PIN_VALVE) | (1ULL << PIN_LED_WS2812),
+        .pin_bit_mask  = (1ULL << PIN_VALVE) | (1ULL << PIN_HEATER) | (1ULL << PIN_LED_WS2812),
         .mode          = GPIO_MODE_OUTPUT,
         .pull_up_en    = GPIO_PULLUP_DISABLE,
         .pull_down_en  = GPIO_PULLDOWN_ENABLE,   // Pull-down keeps BJT off at boot
@@ -288,17 +289,8 @@ static void init_gpio(void) {
     };
     ESP_ERROR_CHECK(gpio_config(&io_conf));
 
-    gpio_config_t heater_conf = {
-        .pin_bit_mask  = (1ULL << PIN_HEATER),
-        .mode          = GPIO_MODE_OUTPUT,
-        .pull_up_en    = GPIO_PULLUP_ENABLE,     // Pull-up keeps SSR off at boot
-        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
-        .intr_type     = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&heater_conf));
-
     gpio_set_level(PIN_VALVE,      0);   // Valve 1 OFF
-    gpio_set_level(PIN_HEATER,     1);   // SSR 1 OFF (Active LOW)
+    gpio_set_level(PIN_HEATER,     0);   // SSR 1 OFF (BJT base LOW)
     gpio_set_level(PIN_LED_WS2812, 0);   // WS2812 LED pin LOW
 
     set_led_color(0, 0, 0);               // WS2812 reset
