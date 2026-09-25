@@ -95,8 +95,7 @@ static const char *TAG = "biochar";
 // ------------------- DRY DETECTION (PRESSURE) ------------------
 // ===============================================================
 #define CYCLE_START_PSI      2.0f       // Pressure must exceed this to start a cycle
-#define DRY_PRESSURE_MAX     1.0f       // PSI below which dry detection is considered
-#define DRY_TIME_MS          15000UL    // Must stay dry for this long to latch
+#define REPRESSURIZE_TIMEOUT_MS  (5UL * 60UL * 1000UL) // 5 minutes timeout to drop target pressure
 #define MAX_CYCLE_TIME_MS    (30UL * 60UL * 1000UL) // 30 minutes maximum cycle duration
 #define LONG_PRESS_RESET_MS  3000LL     // 3 seconds long-press to reset emergency trip
 
@@ -488,21 +487,70 @@ static void control_task(void *arg) {
         static int64_t burst_start_time = 0;
         static int64_t burst_duration = 0;
         static int64_t cooldown_start_time = -VALVE_COOLDOWN_MS;
+        static float dynamic_target_pressure = TARGET_PRESSURE;
+        static int64_t repressurize_timer_start = 0;
+        static bool is_repressurizing = false;
+
+        float vent_lower_bound = dynamic_target_pressure - 2.0f;
+        if (vent_lower_bound < MIN_SEAL_PRESSURE) {
+            vent_lower_bound = MIN_SEAL_PRESSURE;
+        }
 
         if (current_state == STATE_ERROR) {
             valve_on = true;  // Latch valve OPEN in emergency trip
             release_active = false;
+            is_repressurizing = false;
         } else {
+            // ------------------- DRYNESS & DYNAMIC TARGET LOGIC -------------------
+            if (!valve_on && !release_active && !dry_latched && cycle_active) {
+                if (temp_valid && temp_ema >= 100.0f && psi < dynamic_target_pressure) {
+                    if (!is_repressurizing) {
+                        is_repressurizing = true;
+                        repressurize_timer_start = now;
+                    } else {
+                        if ((now - repressurize_timer_start) >= (int64_t)REPRESSURIZE_TIMEOUT_MS) {
+                            if (dynamic_target_pressure > MIN_SEAL_PRESSURE) {
+                                dynamic_target_pressure -= 1.0f;
+                                if (dynamic_target_pressure < MIN_SEAL_PRESSURE) {
+                                    dynamic_target_pressure = MIN_SEAL_PRESSURE;
+                                }
+                                ESP_LOGI(TAG, "⏱️ TIMEOUT: Dropped target pressure to %.1f PSI", dynamic_target_pressure);
+                                repressurize_timer_start = now;
+                                vent_lower_bound = dynamic_target_pressure - 2.0f;
+                                if (vent_lower_bound < MIN_SEAL_PRESSURE) {
+                                    vent_lower_bound = MIN_SEAL_PRESSURE;
+                                }
+                            } else {
+                                dry_latched = true;
+                                is_repressurizing = false;
+                                cycle_active = false;
+                                cycle_start_time = 0;
+                                ESP_LOGI(TAG, "🌱 DRY LATCHED: Failed to reach minimum seal pressure. Biochar drying stage complete!");
+                            }
+                        }
+                    }
+                } else {
+                    is_repressurizing = false;
+                }
+            } else {
+                is_repressurizing = false;
+            }
+
             // Trigger release cycle only when both pressure and temp targets are met
-            if (!release_active && psi >= TARGET_PRESSURE && temp_valid && temp_ema >= TARGET_TEMP_C) {
+            if (!release_active && psi >= dynamic_target_pressure && temp_valid && temp_ema >= TARGET_TEMP_C) {
                 release_active = true;
+                ESP_LOGI(TAG, "💨 VALVE: Target %.1f PSI reached. Initiating release.", dynamic_target_pressure);
+                if (is_repressurizing) {
+                    ESP_LOGI(TAG, "📈 REPRESSURIZE: Time to target was %d ms", (int)(now - repressurize_timer_start));
+                }
             }
 
             if (release_active) {
-                // CRITICAL SAFETY FLOOR: If we drop to or below seal pressure, close completely and end release
-                if (psi <= MIN_SEAL_PRESSURE) {
+                // CRITICAL SAFETY FLOOR: If we drop to or below vent lower bound, close completely and end release
+                if (psi <= vent_lower_bound) {
                     valve_on = false;
                     release_active = false;
+                    ESP_LOGI(TAG, "💨 VALVE: Dropped below vent bound %.1f PSI. Closing.", vent_lower_bound);
                 } else {
                     if (valve_on) {
                         // We are in an active burst
@@ -515,12 +563,12 @@ static void control_task(void *arg) {
                         // Valve is closed. Are we in cooldown?
                         if ((now - cooldown_start_time) >= (int64_t)VALVE_COOLDOWN_MS) {
                             // Cooldown finished, start a new burst
-                            float clamped_psi = psi > TARGET_PRESSURE ? TARGET_PRESSURE : psi;
-                            float range_p = TARGET_PRESSURE - MIN_SEAL_PRESSURE;
+                            float clamped_psi = psi > dynamic_target_pressure ? dynamic_target_pressure : psi;
+                            float range_p = dynamic_target_pressure - vent_lower_bound;
                             float duty_cycle = 0.0f;
 
                             if (range_p > 0.0f) {
-                                float t = (clamped_psi - MIN_SEAL_PRESSURE) / range_p;
+                                float t = (clamped_psi - vent_lower_bound) / range_p;
                                 float log_factor = logf(1.0f + (t * 1.71828f)) / 1.0f;
                                 duty_cycle = log_factor;
                                 if (duty_cycle < 0.0f) duty_cycle = 0.0f;
@@ -559,8 +607,8 @@ static void control_task(void *arg) {
                         base_temp_for_absolute_runaway = -1.0f;
                         valve_on = false;
                         dry_latched = false;
-                        has_pressurized = false;
                         cycle_active = false;
+                            dynamic_target_pressure = TARGET_PRESSURE;
                         ESP_LOGI(TAG, "✅ EMERGENCY TRIP RESET: System returned to IDLE!");
                     } else if (cycle_active) {
                         cycle_active = false;
@@ -583,8 +631,7 @@ static void control_task(void *arg) {
                         cycle_active = true;
                         cycle_start_time = now;
                         dry_latched = false;
-                        has_pressurized = false;
-                        dry_candidate_start = 0;
+                        dynamic_target_pressure = TARGET_PRESSURE;
                         ESP_LOGI(TAG, "🚽 FLUSH BUTTON PRESSED: Biochar cycle initiated manually!");
                     }
                 }
@@ -597,8 +644,7 @@ static void control_task(void *arg) {
             cycle_active = true;
             cycle_start_time = now;
             dry_latched = false;
-            has_pressurized = true;
-            dry_candidate_start = 0;
+            dynamic_target_pressure = TARGET_PRESSURE;
             ESP_LOGI(TAG, "🔥 CYCLE STARTED: Pressure exceeded threshold (%.2f PSI)", psi);
         }
         */
@@ -606,33 +652,12 @@ static void control_task(void *arg) {
         if (cycle_active) {
             int64_t cycle_elapsed = now - cycle_start_time;
 
-            if (psi >= CYCLE_START_PSI) {
-                has_pressurized = true;
-            }
-
             // Check 30-minute max cycle timeout
             if (cycle_elapsed >= (int64_t)MAX_CYCLE_TIME_MS) {
                 ESP_LOGI(TAG, "⏰ CYCLE COMPLETE: Reached maximum cycle duration (30 mins). Resetting to IDLE.");
                 cycle_active = false;
                 dry_latched = false;
-                has_pressurized = false;
-                dry_candidate_start = 0;
                 cycle_start_time = 0;
-            } else if (!dry_latched && !emergency_tripped) {
-                // Dryness detection: only triggers AFTER system has pressurized
-                if (has_pressurized && psi <= DRY_PRESSURE_MAX) {
-                    if (dry_candidate_start == 0)
-                        dry_candidate_start = now;
-                    if ((now - dry_candidate_start) >= (int64_t)DRY_TIME_MS) {
-                        dry_latched = true;
-                        cycle_active = false;
-                        has_pressurized = false;
-                        cycle_start_time = 0;
-                        ESP_LOGI(TAG, "🌱 DRY LATCHED: Moisture evaporated. Biochar drying stage complete!");
-                    }
-                } else {
-                    dry_candidate_start = 0;
-                }
             }
         }
 
