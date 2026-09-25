@@ -357,6 +357,7 @@ static void transition_to(system_state_t new_state, float current_temp, int64_t 
 
     if (new_state == STATE_ERROR) {
         emergency_tripped = true;
+        ESP_LOGE(TAG, "🚨 SYSTEM ENTERED ERROR STATE: All heaters DISABLED, valve FORCED OPEN!");
     }
 }
 
@@ -439,9 +440,9 @@ static void control_task(void *arg) {
                     }
                 }
 
-                // 5C STUCK BJT RUNAWAY: SUPPRESSED BY 60s GRACE PERIOD
+                // 5C STUCK BJT RUNAWAY: SUPPRESSED BY 1 HOUR GRACE PERIOD
                 if (base_temp_for_runaway >= 0.0f) {
-                    bool grace = ((current_state == STATE_COOLING || current_state == STATE_OFF) && cooling_start_time > 0 && (now - cooling_start_time) <= 60000);
+                    bool grace = ((current_state == STATE_COOLING || current_state == STATE_OFF) && cooling_start_time > 0 && (now - cooling_start_time) <= 3600000);
                     if (!grace) {
                         if (temp_ema - base_temp_for_runaway >= 5.0f) {
                             ESP_LOGE(TAG, "CRITICAL ERROR: Stuck BJT thermal runaway (+5C)");
@@ -455,8 +456,8 @@ static void control_task(void *arg) {
 
             // 3. Stagnation in Heating
             if (current_state == STATE_HEATING && temp_valid) {
-                // Rate limit recording to ~1 second
-                if (now - last_history_record_time >= 1000) {
+                // Rate limit recording to ~20 seconds (1 hour window across 180 samples)
+                if (now - last_history_record_time >= 20000) {
                     heating_temp_history[history_head] = temp_ema;
                     heating_time_history[history_head] = now;
                     last_history_record_time = now;
@@ -466,15 +467,15 @@ static void control_task(void *arg) {
 
                 int oldest_idx = history_count == STAGNATION_WINDOW_SIZE ? history_head : 0;
 
-                while (history_count > 1 && (now - heating_time_history[oldest_idx]) > 180000) {
+                while (history_count > 1 && (now - heating_time_history[oldest_idx]) > 3600000) {
                     oldest_idx = (oldest_idx + 1) % STAGNATION_WINDOW_SIZE;
                     history_count--;
                 }
 
-                if (history_count > 1 && (now - heating_time_history[oldest_idx]) >= 179500) {
+                if (history_count > 1 && (now - heating_time_history[oldest_idx]) >= 3595000) {
                     float oldest_temp = heating_temp_history[oldest_idx];
                     if (temp_ema - oldest_temp < 3.0f) {
-                        ESP_LOGE(TAG, "CRITICAL ERROR: Heater stagnation (temp rise < 3C over 180s)");
+                        ESP_LOGE(TAG, "CRITICAL ERROR: Heater stagnation (temp rise < 3C over 1 hour)");
                         transition_to(STATE_ERROR, temp_ema, now);
                     }
                 }
@@ -630,6 +631,14 @@ static void control_task(void *arg) {
                         } else {
                             ESP_LOGE(TAG, "⚠️ CANNOT RESET TRIP: System conditions still unsafe! P=%.2f PSI, T=%.1f°C", psi, temp_ema);
                         }
+                    } else if (cycle_active) {
+                        cycle_active = false;
+                        dry_latched = false;
+                        has_pressurized = false;
+                        dry_candidate_start = 0;
+                        cycle_start_time = 0;
+                        current_state = STATE_OFF;
+                        ESP_LOGI(TAG, "🛑 CYCLE CANCELLED: Biochar cycle manually cancelled via long press!");
                     }
                 }
             }
@@ -676,7 +685,7 @@ static void control_task(void *arg) {
         bool  main_heater_on = false;
         float duty           = 0.0f;
 
-        if (!dry_latched && !emergency_tripped && temp_valid) {
+        if (cycle_active && !dry_latched && !emergency_tripped && temp_valid) {
             float error = SETPOINT_C - temp_ema;
             duty = (temp_ema >= SETPOINT_C + HYST_C) ? 0.0f : KP * error;
             if (duty < 0.0f) duty = 0.0f;
