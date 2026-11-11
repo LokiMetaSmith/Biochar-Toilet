@@ -1,4 +1,5 @@
 import time
+import math
 
 class HeaterController:
     """
@@ -41,6 +42,9 @@ class HeaterController:
         Returns:
             float: Calculated duty cycle between 0.0 (0%) and 1.0 (100%).
         """
+        if current_temp is None or math.isnan(current_temp):
+            return 0.0
+
         if current_temp >= (self.target_setpoint + self.hysteresis):
             return 0.0
 
@@ -70,6 +74,12 @@ class HeaterController:
             now_ms = int(time.time() * 1000)
 
         self.dry_latched = dry_latched
+
+        # Sensor Fault Check: None, NaN, or non-numeric temperature
+        if current_temp is None or math.isnan(current_temp):
+            self.duty_cycle = 0.0
+            self.heater_on = False
+            return False
 
         # Safety Check: Hard Overtemperature Trip
         if current_temp >= self.max_safe_temp:

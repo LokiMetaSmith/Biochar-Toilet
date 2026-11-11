@@ -7,12 +7,13 @@ class ValveController:
     Uses calculated single-shot duration with cooldown for logarithmic pressure release.
     Also implements dynamic target pressure dropping and dryness detection based on repressurization timeouts.
     """
-    def __init__(self, target_pressure=8.0, target_temperature=121.0, min_seal_pressure=4.0, max_safe_pressure=18.0, max_safe_temperature=250.0, window_ms=2000, cooldown_ms=2000, repressurize_timeout_ms=300000):
+    def __init__(self, target_pressure=8.0, target_temperature=121.0, min_seal_pressure=4.0, max_safe_pressure=18.0, max_safe_temperature=250.0, min_safe_pressure=-0.2, window_ms=2000, cooldown_ms=2000, repressurize_timeout_ms=300000):
         self.initial_target_pressure = target_pressure
         self.target_temperature = target_temperature
         self.min_seal_pressure = min_seal_pressure
         self.max_safe_pressure = max_safe_pressure
         self.max_safe_temperature = max_safe_temperature
+        self.min_safe_pressure = min_safe_pressure
 
         self.valve_open = False
         self.release_active = False
@@ -30,6 +31,7 @@ class ValveController:
         self.repressurize_timeout_ms = repressurize_timeout_ms
         self.repressurize_timer_start = 0
         self.is_repressurizing = False
+        self.negative_pressure_counter = 0
 
         # Calculate bounds
         self._update_bounds()
@@ -45,9 +47,27 @@ class ValveController:
             current_time_ms = self.get_time_ms()
 
         # Emergency Interlock Check
+        if pressure is None or math.isnan(pressure) or temperature is None or math.isnan(temperature):
+            self.emergency_tripped = True
+            self.valve_open = True
+            self.release_active = False
+            return
+
+        # Negative pressure check (3 consecutive triggers mirror C firmware safety interlock)
+        if pressure < self.min_safe_pressure:
+            self.negative_pressure_counter += 1
+            if self.negative_pressure_counter >= 3:
+                self.emergency_tripped = True
+                self.valve_open = True
+                self.release_active = False
+                return
+        else:
+            self.negative_pressure_counter = 0
+
         if pressure >= self.max_safe_pressure or temperature >= self.max_safe_temperature:
             self.emergency_tripped = True
             self.valve_open = True
+            self.release_active = False
             return
 
         if self.emergency_tripped:
@@ -134,4 +154,5 @@ class ValveController:
         self.dynamic_target_pressure = self.initial_target_pressure
         self.dry_latched = False
         self.is_repressurizing = False
+        self.negative_pressure_counter = 0
         self._update_bounds()

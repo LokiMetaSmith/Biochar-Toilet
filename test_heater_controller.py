@@ -74,5 +74,18 @@ class TestHeaterController(unittest.TestCase):
         self.assertFalse(controller.is_overtemp_tripped())
         self.assertFalse(controller.is_on())
 
+    def test_sensor_fault_nan_none(self):
+        controller = HeaterController(target_setpoint=200.0)
+
+        # None temperature should keep duty at 0 and heater OFF
+        self.assertFalse(controller.update(current_temp=None, now_ms=100))
+        self.assertEqual(controller.duty_cycle, 0.0)
+        self.assertFalse(controller.is_on())
+
+        # NaN temperature should keep duty at 0 and heater OFF
+        self.assertFalse(controller.update(current_temp=float('nan'), now_ms=200))
+        self.assertEqual(controller.duty_cycle, 0.0)
+        self.assertFalse(controller.is_on())
+
 if __name__ == '__main__':
     unittest.main()
