@@ -113,5 +113,25 @@ class TestValveController(unittest.TestCase):
         controller.update(pressure=3.0, temperature=100.0, current_time_ms=100)
         self.assertTrue(controller.is_open())
 
+    def test_negative_pressure_fault(self):
+        controller = ValveController(min_safe_pressure=-0.2)
+
+        # 1-2 negative pressure readings shouldn't trip yet
+        controller.update(pressure=-0.3, temperature=100.0, current_time_ms=0)
+        self.assertFalse(controller.is_emergency_tripped())
+        controller.update(pressure=-0.3, temperature=100.0, current_time_ms=100)
+        self.assertFalse(controller.is_emergency_tripped())
+
+        # 3rd consecutive negative pressure reading trips emergency
+        controller.update(pressure=-0.3, temperature=100.0, current_time_ms=200)
+        self.assertTrue(controller.is_emergency_tripped())
+        self.assertTrue(controller.is_open())
+
+    def test_sensor_nan_none_fault(self):
+        controller = ValveController()
+        controller.update(pressure=None, temperature=100.0, current_time_ms=0)
+        self.assertTrue(controller.is_emergency_tripped())
+        self.assertTrue(controller.is_open())
+
 if __name__ == '__main__':
     unittest.main()
